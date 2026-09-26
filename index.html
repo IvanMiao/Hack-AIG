@@ -3,50 +3,118 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" href="data:," />
-    <title>NEMESIS</title>
+    <meta name="theme-color" content="#05060a" />
+    <meta name="description" content="One sentence. One nightmare. NEMESIS is a summoned boss fight in the void." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%2305060a' stroke='%237fdcff' stroke-width='2'/%3E%3Cpath d='M16 5l2.6 8.4L27 16l-8.4 2.6L16 27l-2.6-8.4L5 16l8.4-2.6z' fill='%237fdcff'/%3E%3C/svg%3E" />
+    <title>NEMESIS — Forge the thing that remembers</title>
     <link rel="stylesheet" href="/src/styles/hud.css" />
   </head>
   <body>
-    <canvas id="stage"></canvas>
+    <a class="skip-link" href="#incantation-input">Skip to the incantation</a>
+    <canvas id="stage" aria-hidden="true"></canvas>
     <div id="hud">
-      <section id="incantation" class="panel">
-        <h1 class="title">NEMESIS</h1>
-        <p class="tagline">One sentence. One boss. It remembers.</p>
-        <textarea id="incantation-input" rows="2" maxlength="280"
-          placeholder="Speak a nightmare into existence…"></textarea>
-        <div class="row">
-          <button id="summon-btn" class="primary">SUMMON</button>
-          <button id="fallback-btn">Use a bound nightmare</button>
-        </div>
-        <p id="incantation-status" class="status"></p>
-      </section>
-      <section id="ritual" class="panel hidden">
-        <p id="ritual-incantation" class="ritual-incantation"></p>
-        <div class="cards">
-          <article class="card" data-card="form"><header><h3>FORM</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
-          <article class="card" data-card="temper"><header><h3>TEMPER</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
-          <article class="card" data-card="voice"><header><h3>VOICE</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
-          <article class="card" data-card="arena"><header><h3>ARENA</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
-        </div>
-        <div class="ritual-progress"><div id="ritual-progress-fill"></div></div>
-        <p id="ritual-status" class="status"></p>
-        <button id="enter-btn" class="primary" disabled>ENTER THE RIFT</button>
-      </section>
-      <section id="fight" class="panel hidden">
-        <img id="portrait" class="portrait" alt="" />
-        <div id="boss-bar"><span id="boss-name"></span><div class="bar"><div id="boss-hp"></div></div></div>
-        <div id="player-bar"><div class="bar"><div id="player-hp"></div></div><div class="bar stamina"><div id="player-stamina"></div></div></div>
-        <p id="subtitle" class="subtitle"></p>
-        <div id="hit-vignette"></div>
-        <p class="controls">WASD move · J / LMB light · K / RMB heavy · Space roll</p>
-        <div id="outcome" class="hidden">
-          <h2 id="outcome-title"></h2>
-          <p id="outcome-line"></p>
-          <div id="grudge" class="hidden"><span class="grudge-label">GRUDGE</span><p id="grudge-observation"></p><p id="grudge-patch"></p></div>
-          <div class="row"><button id="retry-btn" class="primary">FIGHT AGAIN</button><button id="new-btn">New incantation</button></div>
-        </div>
-      </section>
+      <main>
+        <section id="incantation" class="panel" aria-labelledby="game-title">
+          <div class="hero-runes" aria-hidden="true">
+            <svg viewBox="0 0 220 220" focusable="false">
+              <circle cx="110" cy="110" r="101" />
+              <circle cx="110" cy="110" r="82" />
+              <circle cx="110" cy="110" r="61" />
+              <path d="M110 10v28m0 144v28M10 110h28m144 0h28M39 39l20 20m102 102 20 20m0-142-20 20M59 161l-20 20" />
+              <path d="m110 50 17 43 43 17-43 17-17 43-17-43-43-17 43-17z" />
+            </svg>
+          </div>
+          <p class="eyebrow">A RITUAL FOR THE UNFORGIVEN</p>
+          <h1 id="game-title" class="title">NEMESIS</h1>
+          <p class="tagline">One sentence. One boss. It remembers.</p>
+          <form id="incantation-form" novalidate>
+            <label for="incantation-input">Speak your incantation</label>
+            <textarea id="incantation-input" rows="2" maxlength="280" aria-invalid="false"
+              aria-describedby="incantation-help incantation-error"
+              placeholder="Describe what crawls out of the dark…"></textarea>
+            <div class="field-meta">
+              <p id="incantation-error" class="field-error" role="alert"></p>
+              <span id="char-count" aria-live="polite">0/280</span>
+            </div>
+            <div class="examples" aria-label="Incantation examples">
+              <button type="button" class="example-chip" data-example="a cathedral bell that swallowed its ringer">cathedral bell</button>
+              <button type="button" class="example-chip" data-example="a wolf made of every lie I told">wolf of lies</button>
+              <button type="button" class="example-chip" data-example="a burning saint who forgot the prayer">saint without prayer</button>
+            </div>
+            <p id="incantation-help" class="helper">Ctrl/⌘+Enter to summon</p>
+            <div class="actions">
+              <button id="summon-btn" class="primary" type="submit">SUMMON</button>
+              <button id="fallback-btn" type="button">Use a bound nightmare</button>
+            </div>
+          </form>
+          <p id="incantation-status" class="status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="ritual" class="panel ritual hidden" aria-label="Forging the nightmare" aria-live="polite" aria-busy="false">
+          <p id="ritual-incantation" class="ritual-incantation"></p>
+          <div class="cards" role="list" aria-label="Forging stages">
+            <article class="card" data-card="form" role="listitem"><header><h3>FORM</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="temper" role="listitem"><header><h3>TEMPER</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="voice" role="listitem"><header><h3>VOICE</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="arena" role="listitem"><header><h3>ARENA</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+          </div>
+          <div class="ritual-progress" role="progressbar" aria-label="Summoning progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="ritual-progress-fill"></div>
+          </div>
+          <p id="ritual-status" class="status" role="status" aria-live="polite"></p>
+          <button id="enter-btn" class="primary" type="button" disabled>ENTER THE RIFT</button>
+        </section>
+
+        <section id="fight" class="panel hidden" aria-label="Boss fight">
+          <img id="portrait" class="portrait" alt="" />
+          <div id="player-bar">
+            <div class="meter">
+              <div class="meter-heading"><span>VIGOR</span><span id="vigor-value">100 / 100</span></div>
+              <div class="bar vigor" role="progressbar" aria-label="Player vigor" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="player-hp"></div></div>
+            </div>
+            <div class="meter">
+              <div class="meter-heading"><span>STAMINA</span><span id="stamina-value">100 / 100</span></div>
+              <div class="bar stamina" role="progressbar" aria-label="Player stamina" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="player-stamina"></div></div>
+            </div>
+          </div>
+          <button id="retreat-btn" class="retreat" type="button" aria-label="Retreat to incantation">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 12H5m7 7-7-7 7-7" /></svg>
+            <span>RETREAT</span><kbd>ESC</kbd>
+          </button>
+          <div id="boss-bar">
+            <p class="boss-eyebrow">THE FORGED NEMESIS</p>
+            <h2 id="boss-name"></h2>
+            <p id="boss-title"></p>
+            <div id="phase-pips" class="phase-pips" aria-label="Boss phases"></div>
+            <div class="bar boss-health" role="progressbar" aria-label="Nemesis vigor" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="boss-hp"></div></div>
+          </div>
+          <p id="subtitle" class="subtitle" aria-live="polite" aria-atomic="true"></p>
+          <p class="controls-hint">
+            <span>MOVE</span><kbd>WASD</kbd>
+            <span>LIGHT</span><kbd>J/LMB</kbd>
+            <span>HEAVY</span><kbd>K/RMB</kbd>
+            <span>ROLL</span><kbd>SPACE</kbd>
+            <span>RETREAT</span><kbd>ESC</kbd>
+          </p>
+          <div id="letterbox-top" class="letterbox" aria-hidden="true"></div>
+          <div id="letterbox-bottom" class="letterbox" aria-hidden="true"></div>
+          <section id="boss-intro" class="boss-intro hidden" aria-live="polite">
+            <p>THE VOID HAS REMEMBERED</p>
+            <h2 id="intro-name"></h2>
+            <span id="intro-title"></span>
+          </section>
+          <div id="hit-vignette" aria-hidden="true"></div>
+          <section id="outcome" class="hidden" aria-labelledby="outcome-title">
+            <h2 id="outcome-title"></h2>
+            <p id="outcome-line"></p>
+            <div id="grudge" class="hidden"><span class="grudge-label">GRUDGE</span><p id="grudge-observation"></p><p id="grudge-patch"></p></div>
+            <div class="actions">
+              <button id="retry-btn" class="primary" type="button">FIGHT AGAIN</button>
+              <button id="new-btn" type="button">New incantation</button>
+            </div>
+          </section>
+        </section>
+      </main>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -92,6 +92,7 @@ export function applyPhaseRule(state: BattleState, phase: Phase, events: BattleE
     const axis = norm(sub(state.player.pos, state.boss.pos));
     const limit = arena.targetRadius - PLAYER_EDGE_MARGIN - ARENA_PILLARS.radius - 0.5;
     const ids: number[] = [];
+    for (const o of arena.obstacles) events?.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by: "arena" });
     arena.obstacles = [];
     for (let i = 0; i < ARENA_PILLARS.count; i += 1) {
       // Offset by half a step so no pillar sits on the line between the fighters at the moment it rises.

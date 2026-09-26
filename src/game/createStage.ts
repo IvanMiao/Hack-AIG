@@ -88,6 +88,8 @@ export interface Stage {
   setMode(mode: "attract" | "fight"): void;
   /** Map a screen-relative stick (x = right, z = forward) into world space using the current camera yaw. */
   cameraRelative(move: Vec2): Vec2;
+  /** Inverse of `cameraRelative`: a world-space direction expressed as screen right / screen forward. */
+  screenRelative(dir: Vec2): Vec2;
   render(dt: number, state: BattleState, events: readonly BattleEvent[]): void;
   dispose(): void;
 }
@@ -1446,6 +1448,15 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       return {
         x: cameraForward.x * move.z - cameraForward.z * move.x,
         z: cameraForward.z * move.z + cameraForward.x * move.x,
+      };
+    },
+    screenRelative: (dir) => {
+      camera.getWorldDirection(cameraForward).setY(0);
+      if (cameraForward.lengthSq() < 1e-6) return dir;
+      cameraForward.normalize();
+      return {
+        x: -cameraForward.z * dir.x + cameraForward.x * dir.z,
+        z: cameraForward.x * dir.x + cameraForward.z * dir.z,
       };
     },
     render,

@@ -157,11 +157,25 @@ button.bound-card span { color: var(--bound-accent); font-size: 9px; letter-spac
 .bar > div { width: 100%; height: 100%; background: var(--accent); box-shadow: 0 0 12px var(--accent); transition: width 120ms linear; }
 .bar.stamina { height: 6px; }
 .bar.stamina > div { background: #c8f56a; box-shadow: 0 0 8px #c8f56a; }
+/* Combo pips fill left to right as the light chain lands; the charge bar rises while heavy is held. */
+.combat-readout { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
+.combo-pips { display: flex; gap: 4px; }
+.combo-pips span { display: block; width: 18px; height: 5px; border: 1px solid rgba(233, 228, 216, 0.3); background: rgba(233, 228, 216, 0.08); transform: skewX(-22deg); transition: background-color 80ms, box-shadow 80ms, border-color 80ms; }
+.combo-pips span.lit { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.combo-pips span.finisher { border-color: #fff; background: #fff7dc; box-shadow: 0 0 12px #fff; }
+.bar.charge { flex: 1; height: 4px; margin-top: 0; border-color: rgba(255, 240, 200, 0.3); background: rgba(255, 240, 200, 0.06); transition: opacity 160ms; }
+.bar.charge > div { width: 0; background: linear-gradient(90deg, var(--accent), #fff7dc); box-shadow: 0 0 10px #fff7dc; transition: width 40ms linear; }
+.bar.charge.full > div { animation: pulse 0.22s ease-in-out infinite; }
+/* Short combat callouts (perfect roll, finisher, charged) rise from just below the hero and fade. */
+.combat-cue { position: absolute; z-index: 6; top: 58%; left: 50%; margin: 0; padding: 4px 14px; transform: translate(-50%, 0); color: var(--bone); font-family: var(--font-display); font-size: clamp(13px, 1.6vw, 20px); letter-spacing: 0.28em; text-shadow: 0 0 18px var(--accent), 0 2px 8px #000; opacity: 0; }
+.combat-cue.show { animation: cue-rise 720ms cubic-bezier(0.1, 0.8, 0.2, 1) forwards; }
+.combat-cue[data-kind="perfect"] { color: #fff; text-shadow: 0 0 22px #fff, 0 0 40px var(--accent); }
+.combat-cue[data-kind="hurt"] { color: #ff8294; text-shadow: 0 0 18px rgba(255, 40, 70, 0.7), 0 2px 8px #000; }
 .retreat { position: absolute; z-index: 5; top: 3vh; right: 3vw; display: flex; min-width: 44px; align-items: center; justify-content: center; gap: 9px; padding: 0 12px; pointer-events: auto !important; font-size: 10px; letter-spacing: 0.12em; }
 .retreat svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
 kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: center; justify-content: center; padding: 2px 5px; border: 1px solid rgba(233, 228, 216, 0.35); border-radius: 3px; color: var(--bone); background: rgba(5, 6, 10, 0.72); font: 10px var(--font-body); letter-spacing: 0.02em; white-space: nowrap; }
 .retreat kbd { color: var(--muted); }
-#boss-bar { position: absolute; z-index: 4; bottom: 8vh; left: 50%; width: min(680px, 80vw); transform: translateX(-50%); text-align: center; text-shadow: 0 2px 12px #000; }
+#boss-bar { position: absolute; z-index: 4; bottom: 8vh; left: 50%; width: min(680px, 80vw); padding: 10px 28px 12px; transform: translateX(-50%); text-align: center; text-shadow: 0 2px 12px #000; background: radial-gradient(ellipse at 50% 100%, rgba(4, 5, 9, 0.82), rgba(4, 5, 9, 0.5) 55%, transparent 100%); }
 .boss-eyebrow { margin: 0 0 3px; color: var(--muted); font-size: 9px; letter-spacing: 0.24em; }
 #boss-name { margin: 0; color: var(--bone); font-family: var(--font-display); font-size: clamp(17px, 2.5vw, 25px); letter-spacing: 0.2em; text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 70%, transparent); }
 #boss-title { margin: 2px 0 4px; color: var(--muted); font-family: var(--font-display); font-size: 12px; letter-spacing: 0.08em; }
@@ -187,11 +201,12 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
 .boss-intro h2 { margin: 0; color: var(--bone); font-family: var(--font-display); font-size: clamp(31px, 7vw, 76px); letter-spacing: 0.14em; }
 .boss-intro span { display: block; margin-top: 8px; color: var(--muted); font-family: var(--font-display); font-size: clamp(13px, 2vw, 20px); letter-spacing: 0.1em; }
 .boss-intro.departing { transform: translate(-50%, -54%); opacity: 0; }
-#hit-vignette { position: absolute; z-index: 13; inset: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 40, 70, 0.5) 100%); opacity: 0; }
+/* The red wash is centred opposite the shove (--hit-x/--hit-y in %), so the side the hit came from lights up. */
+#hit-vignette { position: absolute; z-index: 13; inset: 0; --hit-x: 50%; --hit-y: 50%; background: radial-gradient(ellipse at var(--hit-x) var(--hit-y), transparent 38%, rgba(255, 40, 70, 0.55) 100%); opacity: 0; }
 #hit-vignette.flash { animation: vignette 450ms ease-out; }
 /* Sits above the boss bar and clear of the controls hint; both the left and bottom edges dissolve so no cut-off shows. */
-.portrait { position: absolute; z-index: 1; right: -40vw; bottom: calc(8vh + 118px); height: min(56vh, 520px); max-width: 38vw; object-fit: contain; object-position: right bottom; pointer-events: none; opacity: 0; filter: drop-shadow(0 0 30px color-mix(in srgb, var(--accent) 50%, transparent)); mask-image: linear-gradient(90deg, transparent, #000 32%), linear-gradient(0deg, transparent, #000 26%); -webkit-mask-image: linear-gradient(90deg, transparent, #000 32%), linear-gradient(0deg, transparent, #000 26%); mask-composite: intersect; -webkit-mask-composite: source-in; transition: right 900ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 900ms; }
-.portrait.shown { right: 1vw; opacity: 0.9; }
+.portrait { position: absolute; z-index: 1; right: -40vw; bottom: calc(8vh + 118px); height: min(40vh, 380px); max-width: 26vw; object-fit: contain; object-position: right bottom; pointer-events: none; opacity: 0; filter: drop-shadow(0 0 30px color-mix(in srgb, var(--accent) 50%, transparent)); mask-image: linear-gradient(90deg, transparent, #000 32%), linear-gradient(0deg, transparent, #000 26%); -webkit-mask-image: linear-gradient(90deg, transparent, #000 32%), linear-gradient(0deg, transparent, #000 26%); mask-composite: intersect; -webkit-mask-composite: source-in; transition: right 900ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 900ms; }
+.portrait.shown { right: 1vw; opacity: 0.72; }
 .portrait[src=""] { display: none; }
 
 #outcome { position: absolute; z-index: 20; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; background: rgba(0, 0, 0, 0.74); animation: fade-in 1.2s ease-out; pointer-events: auto !important; }
@@ -218,6 +233,7 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
 @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes vignette { 0% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes cue-rise { 0% { opacity: 0; transform: translate(-50%, 12px) scale(0.9); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.04); } 70% { opacity: 1; transform: translate(-50%, -10px) scale(1); } 100% { opacity: 0; transform: translate(-50%, -22px) scale(1); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 @media (max-width: 768px) {
@@ -226,7 +242,7 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(650px, 94vw); gap: 9px; }
   .card { min-height: 184px; padding: 11px; }
   .card-body { font-size: 11px; }
-  .portrait { height: 40vh; max-width: 48vw; bottom: calc(8vh + 104px); }
+  .portrait { height: 30vh; max-width: 36vw; bottom: calc(8vh + 104px); }
   #player-bar { top: 12px; left: 10px; width: min(245px, 58vw); padding: 9px 10px; }
   .retreat { top: 12px; right: 10px; min-width: 44px; padding: 0 9px; gap: 5px; font-size: 9px; }
   #boss-bar { bottom: 8vh; width: calc(100vw - 24px); }
@@ -278,7 +294,7 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
   #boss-bar { bottom: 18vh; }
   .subtitle { bottom: calc(18vh + 90px); }
   .controls-hint { bottom: 5px; }
-  .portrait { height: 48vh; bottom: calc(18vh + 90px); }
+  .portrait { height: 36vh; bottom: calc(18vh + 90px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -288,6 +304,7 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
   .card::before { transition: none; }
   .portrait { right: 1vw; transition: none; }
   #hit-vignette.flash { animation: none; }
+  .combat-cue.show { animation: none; opacity: 1; }
   .boss-intro, .letterbox { transition: none; }
 }
 

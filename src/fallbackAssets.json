@@ -1,0 +1,134 @@
+{
+  "VESSEL-01": {
+    "portrait": {
+      "portrait": "fallback/VESSEL-01/portrait-portrait.jpg"
+    },
+    "sky": {
+      "sky": "fallback/VESSEL-01/sky-sky.jpg"
+    },
+    "music": {
+      "p1": "fallback/VESSEL-01/music-p1.mp3",
+      "p2": "fallback/VESSEL-01/music-p2.mp3"
+    },
+    "voice": {
+      "intro": "fallback/VESSEL-01/voice-intro.ogg",
+      "phase": "fallback/VESSEL-01/voice-phase.ogg",
+      "taunt0": "fallback/VESSEL-01/voice-taunt0.ogg",
+      "taunt1": "fallback/VESSEL-01/voice-taunt1.ogg",
+      "taunt2": "fallback/VESSEL-01/voice-taunt2.ogg",
+      "playerDeath0": "fallback/VESSEL-01/voice-playerDeath0.ogg",
+      "playerDeath1": "fallback/VESSEL-01/voice-playerDeath1.ogg",
+      "defeat": "fallback/VESSEL-01/voice-defeat.ogg"
+    }
+  },
+  "VESSEL-02": {
+    "sky": {
+      "sky": "fallback/VESSEL-02/sky-sky.jpg"
+    },
+    "portrait": {
+      "portrait": "fallback/VESSEL-02/portrait-portrait.jpg"
+    },
+    "music": {
+      "p1": "fallback/VESSEL-02/music-p1.mp3",
+      "p2": "fallback/VESSEL-02/music-p2.mp3"
+    },
+    "voice": {
+      "intro": "fallback/VESSEL-02/voice-intro.ogg",
+      "phase": "fallback/VESSEL-02/voice-phase.ogg",
+      "taunt0": "fallback/VESSEL-02/voice-taunt0.ogg",
+      "taunt1": "fallback/VESSEL-02/voice-taunt1.ogg",
+      "taunt2": "fallback/VESSEL-02/voice-taunt2.ogg",
+      "playerDeath0": "fallback/VESSEL-02/voice-playerDeath0.ogg",
+      "playerDeath1": "fallback/VESSEL-02/voice-playerDeath1.ogg",
+      "defeat": "fallback/VESSEL-02/voice-defeat.ogg"
+    }
+  },
+  "VESSEL-03": {
+    "music": {
+      "p1": "fallback/VESSEL-03/music-p1.mp3",
+      "p2": "fallback/VESSEL-03/music-p2.mp3"
+    },
+    "sky": {
+      "sky": "fallback/VESSEL-03/sky-sky.jpg"
+    },
+    "portrait": {
+      "portrait": "fallback/VESSEL-03/portrait-portrait.jpg"
+    },
+    "voice": {
+      "intro": "fallback/VESSEL-03/voice-intro.ogg",
+      "phase": "fallback/VESSEL-03/voice-phase.ogg",
+      "taunt0": "fallback/VESSEL-03/voice-taunt0.ogg",
+      "taunt1": "fallback/VESSEL-03/voice-taunt1.ogg",
+      "taunt2": "fallback/VESSEL-03/voice-taunt2.ogg",
+      "playerDeath0": "fallback/VESSEL-03/voice-playerDeath0.ogg",
+      "playerDeath1": "fallback/VESSEL-03/voice-playerDeath1.ogg",
+      "defeat": "fallback/VESSEL-03/voice-defeat.ogg"
+    }
+  },
+  "VESSEL-04": {
+    "portrait": {
+      "portrait": "fallback/VESSEL-04/portrait-portrait.jpg"
+    },
+    "sky": {
+      "sky": "fallback/VESSEL-04/sky-sky.jpg"
+    },
+    "music": {
+      "p1": "fallback/VESSEL-04/music-p1.mp3",
+      "p2": "fallback/VESSEL-04/music-p2.mp3"
+    },
+    "voice": {
+      "intro": "fallback/VESSEL-04/voice-intro.ogg",
+      "phase": "fallback/VESSEL-04/voice-phase.ogg",
+      "taunt0": "fallback/VESSEL-04/voice-taunt0.ogg",
+      "taunt1": "fallback/VESSEL-04/voice-taunt1.ogg",
+      "taunt2": "fallback/VESSEL-04/voice-taunt2.ogg",
+      "playerDeath0": "fallback/VESSEL-04/voice-playerDeath0.ogg",
+      "playerDeath1": "fallback/VESSEL-04/voice-playerDeath1.ogg",
+      "defeat": "fallback/VESSEL-04/voice-defeat.ogg"
+    }
+  },
+  "VESSEL-05": {
+    "music": {
+      "p1": "fallback/VESSEL-05/music-p1.mp3",
+      "p2": "fallback/VESSEL-05/music-p2.mp3"
+    },
+    "sky": {
+      "sky": "fallback/VESSEL-05/sky-sky.jpg"
+    },
+    "portrait": {
+      "portrait": "fallback/VESSEL-05/portrait-portrait.jpg"
+    },
+    "voice": {
+      "intro": "fallback/VESSEL-05/voice-intro.ogg",
+      "phase": "fallback/VESSEL-05/voice-phase.ogg",
+      "taunt0": "fallback/VESSEL-05/voice-taunt0.ogg",
+      "taunt1": "fallback/VESSEL-05/voice-taunt1.ogg",
+      "taunt2": "fallback/VESSEL-05/voice-taunt2.ogg",
+      "playerDeath0": "fallback/VESSEL-05/voice-playerDeath0.ogg",
+      "playerDeath1": "fallback/VESSEL-05/voice-playerDeath1.ogg",
+      "defeat": "fallback/VESSEL-05/voice-defeat.ogg"
+    }
+  },
+  "VESSEL-06": {
+    "music": {
+      "p1": "fallback/VESSEL-06/music-p1.mp3",
+      "p2": "fallback/VESSEL-06/music-p2.mp3"
+    },
+    "sky": {
+      "sky": "fallback/VESSEL-06/sky-sky.jpg"
+    },
+    "portrait": {
+      "portrait": "fallback/VESSEL-06/portrait-portrait.jpg"
+    },
+    "voice": {
+      "intro": "fallback/VESSEL-06/voice-intro.ogg",
+      "phase": "fallback/VESSEL-06/voice-phase.ogg",
+      "taunt0": "fallback/VESSEL-06/voice-taunt0.ogg",
+      "taunt1": "fallback/VESSEL-06/voice-taunt1.ogg",
+      "taunt2": "fallback/VESSEL-06/voice-taunt2.ogg",
+      "playerDeath0": "fallback/VESSEL-06/voice-playerDeath0.ogg",
+      "playerDeath1": "fallback/VESSEL-06/voice-playerDeath1.ogg",
+      "defeat": "fallback/VESSEL-06/voice-defeat.ogg"
+    }
+  }
+}

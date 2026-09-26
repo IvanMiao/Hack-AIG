@@ -1,6 +1,9 @@
-import { requestAllAssets, type AssetBundle } from "./assetsClient";
+import { ASSET_KINDS, requestAllAssets, type AssetBundle } from "./assetsClient";
+import { bakedBundles } from "./bakedAssets";
 import { forge } from "./forgeClient";
 import { learn } from "./learnClient";
+import { fetchNemesis, lineageFor, recordOutcome } from "./lineageClient";
+import { codeFromSearch, lineageLine, normalizeCode, SHARE_PARAM, shareText, shareUrl, type Lineage } from "./share";
 import { createGameAudio } from "./game/audio";
 import { createStage } from "./game/createStage";
 import { createCombatInput } from "./game/input";
@@ -26,6 +29,12 @@ const boundList = $("bound-list");
 const retryButton = $<HTMLButtonElement>("retry-btn");
 const newButton = $<HTMLButtonElement>("new-btn");
 const retreatButton = $<HTMLButtonElement>("retreat-btn");
+const huntForm = $<HTMLFormElement>("hunt-form");
+const huntInput = $<HTMLInputElement>("hunt-code");
+const huntButton = $<HTMLButtonElement>("hunt-btn");
+const lineageLineEl = $("lineage-line");
+const shareCodeEl = $("share-code");
+const shareButton = $<HTMLButtonElement>("share-btn");
 const status = $("incantation-status");
 const errorMessage = $("incantation-error");
 const counter = $("char-count");
@@ -51,7 +60,9 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const INTRO_PORTRAIT_MS = 5200;
 const INTRO_CARD_MS = 2500;
 let spec: NemesisSpec | null = null;
+let lineage: Lineage | null = null;
 let battle: Battle | null = null;
+let outcomeRecorded = false;
 let seed = 1;
 let hitStopMs = 0;
 let accumulator = 0;
@@ -89,7 +100,7 @@ function validateIncantation(required: boolean): boolean {
     return true;
   }
   if (length < 4) {
-    errorMessage.textContent = "Say more. It needs a shape.";
+    errorMessage.textContent = "Say more. It needs a task.";
     input.setAttribute("aria-invalid", "true");
     return false;
   }
@@ -102,13 +113,33 @@ function setRitualBusy(busy: boolean) {
   ritualPanel.setAttribute("aria-busy", String(busy));
   input.disabled = busy;
   for (const card of boundList.querySelectorAll<HTMLButtonElement>("button")) card.disabled = busy;
+  huntInput.disabled = busy;
+  huntButton.disabled = busy;
   for (const chip of document.querySelectorAll<HTMLButtonElement>(".example-chip")) chip.disabled = busy;
   summonButton.disabled = busy;
   if (busy) {
-    summonButton.innerHTML = '<span class="spinner" aria-hidden="true"></span> SUMMONING…';
+    summonButton.innerHTML = '<span class="spinner" aria-hidden="true"></span> RUNNING…';
   } else {
-    summonButton.textContent = "SUMMON";
+    summonButton.textContent = "RUN EVAL";
   }
+}
+
+/** Keep the address bar shareable: `?n=CODE` while a nightmare is loaded, clean once the player leaves it. */
+function reflectCodeInUrl(code: string | null) {
+  try {
+    const url = new URL(window.location.href);
+    if (code) url.searchParams.set(SHARE_PARAM, code);
+    else url.searchParams.delete(SHARE_PARAM);
+    window.history.replaceState(null, "", url);
+  } catch {
+  }
+}
+
+function renderLineage() {
+  if (!spec) return;
+  const current = lineage ?? lineageFor(spec);
+  lineageLineEl.textContent = lineageLine({ ...current, gen: spec.lineage.gen });
+  shareCodeEl.textContent = spec.code;
 }
 
 function rememberDeath(log: DeathLog, code: string) {
@@ -144,11 +175,9 @@ function applyAsset(bundle: AssetBundle) {
   }
 }
 
-async function summon(
-  incantation: string,
-  forgeSpec: () => Promise<{ spec: NemesisSpec; source: "gemini" | "fallback" }>,
-  chosen = false,
-) {
+type SummonResult = { spec: NemesisSpec; source: "gemini" | "fallback"; lineage?: Partial<Lineage> | null };
+
+async function summon(incantation: string, forgeSpec: () => Promise<SummonResult>, chosen = false) {
   const token = ++summonToken;
   introSpoken = false;
   portrait.src = "";
@@ -159,19 +188,24 @@ async function summon(
   ritual.begin(incantation);
   setRitualBusy(true);
 
-  let result: { spec: NemesisSpec; source: "gemini" | "fallback" };
+  let result: SummonResult;
   try {
     result = await forgeSpec();
   } catch (error) {
-    console.warn("[forge] request failed; using a bound nightmare", error);
+    console.warn("[forge] request failed; CODEX answers instead", error);
     result = { spec: getFallbackSpec(), source: "fallback" };
   }
   if (token !== summonToken) return;
   spec = result.spec;
+  lineage = lineageFor(result.spec, result.lineage);
+  reflectCodeInUrl(result.spec.code);
   stage.applySpec(result.spec);
   document.documentElement.style.setProperty("--accent", result.spec.art.accentHex);
   ritual.revealSpec(result.spec);
-  if (result.source === "fallback" && !chosen) ritual.setStatus("The rift was silent. A bound nightmare answers instead.");
+  const baked = bakedBundles(result.spec.code);
+  const missingKinds = ASSET_KINDS.filter((kind) => !baked.some((bundle) => bundle.kind === kind));
+  if (result.source === "fallback" && !chosen) ritual.setStatus("The forge timed out. CODEX answers the prompt instead.");
+  else if (missingKinds.length === 0) ritual.setStatus(`${result.spec.identity.name} takes shape. Its voice, sky and music compiled long ago.`);
 
   // The boss GLB streams in behind the forge cards; if it never arrives the procedural stand-in fights instead.
   const modelReady = stage.preloadBoss(result.spec, (fraction) => {
@@ -180,6 +214,11 @@ async function summon(
     if (token === summonToken) ritual.markModel(1);
   });
 
+  // Bound nightmares ship their assets inside the build; only whatever was not baked goes to the Worker.
+  for (const bundle of baked) {
+    applyAsset(bundle);
+    ritual.markAsset(bundle);
+  }
   await requestAllAssets(result.spec.code, {
     onReady: (bundle) => {
       if (token !== summonToken) return;
@@ -191,7 +230,7 @@ async function summon(
       console.warn(`[asset] ${kind} failed`, error);
       ritual.failAsset(kind);
     },
-  });
+  }, missingKinds);
   await modelReady;
   if (token === summonToken) setRitualBusy(false);
 }
@@ -207,6 +246,7 @@ function startBattle(next: NemesisSpec) {
   spec = next;
   seed += 1;
   battle = createBattle(next, seed);
+  outcomeRecorded = false;
   accumulator = 0;
   hitStopMs = 0;
   introHoldMs = reducedMotion.matches ? 0 : INTRO_CARD_MS;
@@ -260,9 +300,9 @@ function renderGrudge() {
   if (pendingGrudge) {
     grudgeObservation.textContent = pendingGrudge.observation;
     grudgePatch.textContent = pendingGrudge.patch;
-    retryButton.textContent = `FACE IT AGAIN · GEN ${pendingGrudge.gen}`;
+    retryButton.textContent = `RETRY · GEN ${pendingGrudge.gen}`;
   } else {
-    grudgeObservation.textContent = "It is studying how you died…";
+    grudgeObservation.textContent = "Reading your death log…";
     grudgePatch.textContent = "";
     retryButton.textContent = "FIGHT AGAIN";
   }
@@ -270,8 +310,8 @@ function renderGrudge() {
 
 function showOutcome(kind: "death" | "victory") {
   if (!spec) return;
-  $("outcome-title").textContent = kind === "death" ? "YOU DIED" : "NEMESIS FELLED";
-  $("outcome-line").textContent = kind === "death" ? `${spec.identity.name} will remember this.` : spec.voice.lines.defeat;
+  $("outcome-title").textContent = kind === "death" ? "PLATFORM COMPROMISED" : "MODEL DEACTIVATED";
+  $("outcome-line").textContent = kind === "death" ? `${spec.identity.name} is writing this into its next training run.` : spec.voice.lines.defeat;
   if (kind === "death") {
     grudgeCard.classList.remove("hidden");
     renderGrudge();
@@ -279,9 +319,86 @@ function showOutcome(kind: "death" | "victory") {
     grudgeCard.classList.add("hidden");
     retryButton.textContent = "FIGHT AGAIN";
   }
+  renderLineage();
+  shareButton.textContent = "SEND IT HUNTING";
+  shareButton.dataset.state = "";
   outcomePanel.classList.remove("hidden");
   outcomePanel.dataset.kind = kind;
   showPortrait(null);
+}
+
+/** One write per fight; the counter on the share card refreshes when the Worker answers. */
+function recordFightOutcome(outcome: "kill" | "victory") {
+  if (!spec || outcomeRecorded) return;
+  outcomeRecorded = true;
+  const code = spec.code;
+  void recordOutcome(code, outcome).then((counters) => {
+    if (!counters || !spec || spec.code !== code) return;
+    lineage = lineageFor(spec, counters);
+    renderLineage();
+  });
+}
+
+async function shareNemesis() {
+  if (!spec) return;
+  const current = { ...(lineage ?? lineageFor(spec)), gen: spec.lineage.gen };
+  const url = shareUrl(window.location, spec.code);
+  const text = shareText(spec, current, url);
+  const flash = (label: string) => {
+    shareButton.textContent = label;
+    shareButton.dataset.state = "copied";
+    window.setTimeout(() => {
+      shareButton.textContent = "SEND IT HUNTING";
+      shareButton.dataset.state = "";
+    }, 2200);
+  };
+  if (typeof navigator.share === "function") {
+    try {
+      await navigator.share({ title: `NEMESIS · ${spec.identity.name}`, text, url });
+      flash("SENT");
+      return;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    flash("COPIED · GO HAUNT SOMEONE");
+  } catch {
+    flash(`CODE ${spec.code}`);
+  }
+}
+
+/** Resolve a shared code and summon it; a code nothing answers to stays on the incantation screen with a hint. */
+async function hunt(rawCode: string) {
+  const code = normalizeCode(rawCode);
+  if (!code) {
+    status.textContent = "A code is 4 to 16 letters and numbers.";
+    huntInput.focus();
+    return;
+  }
+  huntInput.disabled = true;
+  huntButton.disabled = true;
+  status.innerHTML = `<span class="spinner" aria-hidden="true"></span> Searching the rift for ${code}…`;
+  let found: Awaited<ReturnType<typeof fetchNemesis>> = null;
+  let unreachable = false;
+  try {
+    found = await fetchNemesis(code);
+  } catch (error) {
+    console.warn("[hunt] lookup failed", error);
+    unreachable = true;
+  }
+  huntInput.disabled = false;
+  huntButton.disabled = false;
+  if (!found) {
+    status.textContent = unreachable ? "The rift did not answer. Try again in a moment." : `Nothing answers to ${code}. It has faded, or never was.`;
+    huntInput.focus();
+    return;
+  }
+  status.textContent = "";
+  const hunted = found;
+  huntInput.value = "";
+  void summon(`${hunted.spec.identity.incantation} — hunted by code ${code}`, () => Promise.resolve({ spec: hunted.spec, source: "gemini" as const, lineage: hunted.lineage }));
 }
 
 function handleEvents(events: readonly BattleEvent[]) {
@@ -315,6 +432,7 @@ function handleEvents(events: readonly BattleEvent[]) {
         say(spec.voice.lines.playerDeath[event.lineIndex] ?? spec.voice.lines.playerDeath[0] ?? "", 6000);
         audio.speak(`playerDeath${event.lineIndex}`);
         rememberDeath(battle.state.log, spec.code);
+        recordFightOutcome("kill");
         {
           const deadSpec = spec;
           const deadBattle = battle;
@@ -326,6 +444,7 @@ function handleEvents(events: readonly BattleEvent[]) {
             spec = result.spec;
             pendingGrudge = { ...result.grudge, gen: result.spec.lineage.gen };
             renderGrudge();
+            renderLineage();
           });
         }
         window.setTimeout(() => {
@@ -333,6 +452,7 @@ function handleEvents(events: readonly BattleEvent[]) {
         }, 900);
         break;
       case "bossDefeat":
+        recordFightOutcome("victory");
         audio.speak("defeat");
         audio.stopMusic();
         window.setTimeout(() => {
@@ -385,7 +505,8 @@ function retreat() {
   ritual.hide();
   setRitualBusy(false);
   incantationPanel.classList.remove("hidden");
-  status.textContent = "The nightmare waits where you left it.";
+  reflectCodeInUrl(null);
+  status.textContent = "The model is still running where you left it.";
   input.focus();
 }
 
@@ -423,6 +544,17 @@ for (const bound of FALLBACK_SPECS) {
   boundList.append(card);
 }
 
+huntForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void hunt(huntInput.value);
+});
+huntInput.addEventListener("input", () => {
+  huntInput.value = huntInput.value.toUpperCase();
+});
+shareButton.addEventListener("click", () => {
+  void shareNemesis();
+});
+
 input.addEventListener("input", () => {
   updateCounter();
   if (input.value.trim().length >= 4 || errorMessage.textContent) validateIncantation(false);
@@ -455,6 +587,10 @@ retryButton.addEventListener("click", () => {
 newButton.addEventListener("click", retreat);
 
 stage.setMode("attract");
+
+// A shared link summons its nightmare straight away: the friend lands in the ritual, not on an empty form.
+const sharedCode = codeFromSearch(window.location.search);
+if (sharedCode) void hunt(sharedCode);
 
 const idleState = createInitialState(getFallbackSpec(), 0);
 let last = performance.now();

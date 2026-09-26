@@ -113,18 +113,46 @@ const DECAL_FRAGMENT = /* glsl */ `
       return;
     }
 
-    float outline = 1.0 - smoothstep(uEdge * 0.55, uEdge, edgeDist);
-    float rimGlow = (1.0 - smoothstep(0.0, uEdge * 5.0, edgeDist)) * 0.28;
+    /*
+     * Sigil: a double-lined rim notched with rune ticks, an inner weave of spokes or hatching, a smooth
+     * commit band that sheds embers over the sealed area, and a textured burst instead of a flat flash.
+     */
+    float tickCoord;
+    vec2 weaveUv;
+    float weave;
+    if (uKind == ${KIND_QUAD}) {
+      tickCoord = vUv.x * uSize.x + vUv.y * uSize.y;
+      weaveUv = vUv * uSize;
+      weave = step(0.9, fract((weaveUv.x + weaveUv.y) * 1.1)) + step(0.9, fract((weaveUv.x - weaveUv.y) * 1.1));
+    } else {
+      float a = atan(p.y, p.x);
+      float r = length(p) * 2.0;
+      tickCoord = a * uSize.x;
+      weaveUv = p * uSize.x * 2.0;
+      weave = step(0.94, fract(a / 6.2832 * 20.0)) * smoothstep(0.08, 0.3, r) + step(0.92, fract(r * uSize.x * 0.9));
+    }
+    weave = clamp(weave, 0.0, 1.0);
+    float outline = 1.0 - smoothstep(uEdge * 0.45, uEdge * 0.8, edgeDist);
+    float inner = 1.0 - smoothstep(uEdge * 0.22, uEdge * 0.42, abs(edgeDist - uEdge * 1.9));
+    float tick = step(0.84, fract(tickCoord)) * (1.0 - smoothstep(uEdge * 1.6, uEdge * 3.4, edgeDist));
+    float rimGlow = (1.0 - smoothstep(0.0, uEdge * 5.0, edgeDist)) * 0.22;
     float band = 0.0;
     float fill = 0.0;
+    float ember = 0.0;
     if (uProgress > 0.0 && uKind != ${KIND_RING}) {
       float front = uProgress;
-      band = 1.0 - smoothstep(0.0, bandWidth * 1.4, abs(sweep - front));
-      fill = (1.0 - step(front, sweep)) * (0.08 + uProgress * 0.12);
+      band = 1.0 - smoothstep(0.0, bandWidth * 1.6, abs(sweep - front));
+      float sealed = 1.0 - step(front, sweep);
+      fill = sealed * (0.06 + uProgress * 0.1 + weave * 0.2);
+      vec2 cell = floor(weaveUv * 2.5);
+      float h = fract(sin(dot(cell, vec2(12.9898, 78.233)) + floor(uTime * 6.0) * 0.37) * 43758.5453);
+      ember = sealed * step(0.8, h) * (0.5 + 0.5 * sin(uTime * 14.0 + h * 40.0));
     }
-    float alpha = clamp(outline + rimGlow + band * 0.9 + fill + uPulse * 0.12, 0.0, 1.0);
-    alpha = mix(alpha, 1.0, uFlash * 0.75);
-    vec3 color = mix(uColor, vec3(1.0), clamp(uFlash + band * 0.45 + outline * 0.2, 0.0, 1.0));
+    float pulse = uPulse * (0.08 + weave * 0.18);
+    float alpha = clamp(outline + inner * 0.55 + tick * 0.6 + rimGlow + band * 0.9 + fill + ember * 0.6 + pulse, 0.0, 1.0);
+    float burst = 0.3 + 0.7 * max(weave, 1.0 - smoothstep(0.0, uEdge * 4.0, edgeDist));
+    alpha = max(alpha, uFlash * burst);
+    vec3 color = mix(uColor, vec3(1.0), clamp(uFlash * 0.85 + band * 0.45 + ember * 0.5 + outline * 0.2, 0.0, 1.0));
     gl_FragColor = vec4(color, alpha * uOpacity);
   }
 `;

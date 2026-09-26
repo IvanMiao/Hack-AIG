@@ -13,6 +13,7 @@ const timed = async (label, fn) => {
     const result = await fn();
     console.log(`OK   ${label} (${((Date.now() - start) / 1000).toFixed(1)}s)${result ? ` → ${result}` : ""}`);
   } catch (error) {
+    process.exitCode = 1;
     console.log(`FAIL ${label} (${((Date.now() - start) / 1000).toFixed(1)}s): ${error.message}`);
   }
 };
@@ -75,6 +76,10 @@ if (run("gradium")) await timed("gradium token", async () => {
   return `expires_at=${expires_at}`;
 });
 
+if (which === "elevenlabs" && !process.env.ELEVENLABS_API_KEY) {
+  console.log("FAIL elevenlabs music: ELEVENLABS_API_KEY not set");
+  process.exitCode = 1;
+}
 if (run("elevenlabs") && process.env.ELEVENLABS_API_KEY) {
   for (const [temper, prompt] of Object.entries(MUSIC_PROMPTS)) {
     await timed(`elevenlabs music ${temper}`, async () => {

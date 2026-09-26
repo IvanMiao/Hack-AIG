@@ -12,11 +12,11 @@ export function toGeminiSchema(schema: unknown): unknown {
   if (!schema || typeof schema !== "object") return schema;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
-    if (key === "pattern" || key === "additionalProperties" || key === "$schema") continue;
+    if (key === "pattern" || key === "additionalProperties" || key === "$schema" || key === "nullable") continue;
     if (key === "items" && Array.isArray(value)) { out.items = toGeminiSchema(value[0]); continue; }
-    if (key === "nullable") { if (value === true) out.type = [out.type ?? (schema as { type?: string }).type, "null"]; continue; }
     out[key] = toGeminiSchema(value);
   }
+  if ((schema as { nullable?: boolean }).nullable === true && typeof out.type === "string") out.type = [out.type, "null"];
   return out;
 }
 

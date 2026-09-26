@@ -481,7 +481,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const emberSpeeds = new Float32Array(96);
   for (let i = 0; i < emberPositions.length; i += 3) {
     const angle = random() * Math.PI * 2;
-    const radius = 5 + random() * 18;
+    const radius = 5 + random() * (ARENA_RADIUS * 2 + 2);
     emberPositions[i] = Math.cos(angle) * radius;
     emberPositions[i + 1] = random() * 14 - 3;
     emberPositions[i + 2] = Math.sin(angle) * radius;
@@ -507,7 +507,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   fill.target.position.set(0, 1, 0);
   const heroLamp = new THREE.PointLight(0xfff1dc, tuning.lights.heroLamp, 7, 2);
   heroLamp.position.set(0.6, 3.2, -0.4);
-  // Warm pool over the arena centre: the floor reads brightest where the fight is and falls into fog at the rim.
+  // Warm pool that follows the fight: the floor reads brightest around the fighters and falls into fog beyond them.
   const pool = new THREE.SpotLight(0xffe2c0, tuning.lights.pool, 26, 0.62, 0.85, 1.6);
   pool.position.set(0, 13, 0);
   pool.target.position.set(0, 0, 0);
@@ -656,6 +656,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const rollCentre = new THREE.Vector3();
   const cameraForward = new THREE.Vector3();
   const lookTarget = new THREE.Vector3();
+  const poolFocus = new THREE.Vector3();
   const burstAt = new THREE.Vector3();
   const burstDir = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
@@ -1069,6 +1070,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     heroLamp.intensity = tuning.lights.heroLamp;
     pool.intensity = tuning.lights.pool;
     pool.distance = tuning.lights.poolRadius * 2.9;
+    poolFocus.set((player.position.x + boss.position.x) / 2, 0, (player.position.z + boss.position.z) / 2);
+    pool.target.position.lerp(poolFocus, 1 - Math.exp(-step * 3));
+    pool.position.set(pool.target.position.x, 13, pool.target.position.z);
     RIM.strength.value = tuning.rim.strength;
     RIM.power.value = tuning.rim.power;
     if (scene.fog instanceof THREE.FogExp2) scene.fog.density = tuning.fog.density;

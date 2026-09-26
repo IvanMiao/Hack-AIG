@@ -1,5 +1,5 @@
 export const TICK_MS = 1000 / 60;
-export const ARENA_RADIUS = 9;
+export const ARENA_RADIUS = 27;
 export const PLAYER_EDGE_MARGIN = 0.8;
 
 export const PLAYER = {

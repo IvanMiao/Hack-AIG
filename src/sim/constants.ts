@@ -1,6 +1,8 @@
 export const TICK_MS = 1000 / 60;
 export const ARENA_RADIUS = 27;
 export const PLAYER_EDGE_MARGIN = 0.8;
+/** Keeps the boss body (incl. the lunge pose) over the stone; visual pivot lunges up to ~1.1 past the sim position. */
+export const BOSS_EDGE_MARGIN = 1.4;
 
 export const PLAYER = {
   maxHp: 100,

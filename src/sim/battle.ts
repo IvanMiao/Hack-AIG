@@ -1,5 +1,7 @@
 import type { Move, MoveType, NemesisSpec, Phase } from "../spec";
-import { ARENA_RADIUS, BOSS, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
+import { ARENA_RADIUS, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
+
+const BOSS_LIMIT = ARENA_RADIUS - BOSS.radius - BOSS_EDGE_MARGIN;
 import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
 import type { BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
@@ -289,7 +291,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         break;
       case "blink": {
         const behind = norm(sub(state.player.pos, b.pos));
-        b.pos = clampToDisc(add(state.player.pos, behind, MOVE.blink.distanceBehind), ARENA_RADIUS - BOSS.radius);
+        b.pos = clampToDisc(add(state.player.pos, behind, MOVE.blink.distanceBehind), BOSS_LIMIT);
         b.facing = scale(behind, -1);
         if (spec.weakness.trigger === "after_blink") openWeakness(events);
         break;
@@ -335,7 +337,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         events.push({ type: "taunt", index: Math.floor(rng.next() * spec.voice.lines.taunt.length) });
       }
       b.facing = toPlayer;
-      if (dist(b.pos, p.pos) > BOSS.meleeRange) b.pos = add(b.pos, toPlayer, (BOSS.walkSpeed * TICK_MS) / 1000);
+      if (dist(b.pos, p.pos) > BOSS.meleeRange) b.pos = clampToDisc(add(b.pos, toPlayer, (BOSS.walkSpeed * TICK_MS) / 1000), BOSS_LIMIT);
       if (debug.bossAi && b.idleT >= b.idleFor && b.invulnerableT <= 0) {
         beginMove(chooseMove(phase), false, events);
         b.idleT = 0;
@@ -360,7 +362,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     }
     if (current.phase === "active") {
       if (current.move.type === "charge") {
-        b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), ARENA_RADIUS - BOSS.radius);
+        b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), BOSS_LIMIT);
         if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned) {
           current.spawned = true;
           hurtPlayer(current.move.damage, "charge", events);

@@ -12,6 +12,8 @@ export interface PlayerInput {
   light: boolean;
   heavy: boolean;
   roll: boolean;
+  /** flatline phases only; ignored while the arena is 3D */
+  jump: boolean;
   /** level-triggered: heavy is still held (charges the heavy past its windup) */
   heavyHeld?: boolean;
 }
@@ -54,6 +56,9 @@ export interface PlayerState {
   rollPerfect: boolean;
   /** sim times of recent rolls (the boss reads these to punish panic rolling) */
   recentRolls: number[];
+  /** height of the feet above the floor; always 0 outside flatline phases */
+  y: number;
+  vy: number;
 }
 
 export type MovePhase = "telegraph" | "active" | "recover";
@@ -97,7 +102,7 @@ export type HazardShape =
 
 export interface Hazard {
   id: number;
-  source: MoveType;
+  source: HazardSource;
   shape: HazardShape;
   damage: number;
   /** ms remaining. 0 → removed. */
@@ -106,12 +111,18 @@ export interface Hazard {
   cooldown: number;
   repeat: boolean;
   hit: boolean;
+  /** telegraph length for hazards that arm after spawning (arena pulses); 0 for boss strikes */
+  armMs: number;
+  /** ms until armed; harmless while > 0 */
+  armT: number;
 }
 
 export interface Projectile {
   id: number;
   pos: Vec2;
   vel: Vec2;
+  /** height of the shot; only tested against the player in flatline phases */
+  y: number;
   radius: number;
   damage: number;
 }
@@ -119,13 +130,18 @@ export interface Projectile {
 export type BattleEvent =
   | { type: "telegraph"; move: MoveType; ms: number }
   | { type: "moveActive"; move: MoveType }
-  | { type: "playerHit"; move: MoveType; damage: number; hp: number; dir: Vec2 }
+  | { type: "playerHit"; move: HazardSource; damage: number; hp: number; dir: Vec2 }
   | { type: "playerRoll"; dodged: boolean; perfect: boolean }
   | { type: "playerAttack"; kind: "light" | "heavy"; combo: number; charge: number }
   | { type: "bossHit"; damage: number; heavy: boolean; weakness: boolean; hp: number; combo: number; charge: number }
   | { type: "bossStagger" }
   | { type: "weaknessOpen"; ms: number }
   | { type: "phaseChange"; phaseIndex: number }
+  | { type: "arenaShrink"; from: number; to: number; ms: number }
+  | { type: "arenaPulse"; mutator: ArenaMutator; at: Vec2 }
+  | { type: "obstaclesRaised"; ids: number[] }
+  | { type: "obstacleHit"; id: number; hpLeft: number; by: HazardSource }
+  | { type: "obstacleBroken"; id: number; pos: Vec2; by: HazardSource }
   | { type: "taunt"; index: number }
   | { type: "playerDeath"; lineIndex: number }
   | { type: "bossDefeat" };
@@ -137,21 +153,57 @@ export interface DeathLog {
   durationMs: number;
   rolls: { left: number; right: number; toward: number; away: number };
   rollsDodged: number;
-  hitsTaken: Partial<Record<MoveType, number>>;
+  hitsTaken: Partial<Record<HazardSource, number>>;
   lightAttacks: number;
   heavyAttacks: number;
   attacksDuringTelegraph: number;
   attacksDuringRecover: number;
   weaknessHits: number;
-  killedBy: MoveType | null;
+  killedBy: HazardSource | null;
   phaseReached: number;
   bossHpFractionAtDeath: number;
 }
 
+/** What dealt damage: a boss move, or the arena itself (collapsing rim, element hazards). */
+export type HazardSource = MoveType | "arena";
+
+/** Element-driven arena behaviour, derived from `identity.element`: the boss brings its own weather. */
+export const ARENA_MUTATORS = ["none", "ember", "tempest", "bloodtide"] as const;
+export type ArenaMutator = (typeof ARENA_MUTATORS)[number];
+
+/** Breakable cover: a solid disc both fighters slide around; blocks projectiles, chipped by boss strikes. */
+export interface Obstacle {
+  id: number;
+  pos: Vec2;
+  radius: number;
+  hp: number;
+  /** ms since it rose; solid only once past the rise */
+  age: number;
+}
+
+/** Runtime arena: the playable disc can shrink mid-fight; visuals read `radius`, clamps read it every tick. */
+export interface ArenaState {
+  radius: number;
+  targetRadius: number;
+  shrinkFrom: number;
+  /** ms elapsed in the current shrink; equals `shrinkMs` once settled */
+  shrinkT: number;
+  shrinkMs: number;
+  obstacles: Obstacle[];
+  mutator: ArenaMutator;
+  /** ms until the mutator's next pulse */
+  mutatorT: number;
+  /** tempest: constant push on the player, units/s */
+  wind: Vec2;
+}
+
 export interface BattleState {
   seed: number;
+  arena: ArenaState;
   timeMs: number;
   outcome: Outcome;
+  /** the arena has collapsed onto the x axis (a `flatline` phase was reached) */
+  flat: boolean;
   player: PlayerState;
   boss: BossState;
   hazards: Hazard[];

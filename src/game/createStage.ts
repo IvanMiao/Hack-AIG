@@ -4,8 +4,11 @@ import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
 import { createHFHero, type HFHero } from "./hfHero";
 import { createCodexBoss, type CodexBoss } from "./codexBoss";
+import { createFlatlineSet } from "./flatline";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
+import { createPillars } from "./fx/pillars";
+import { createRimCollapse } from "./fx/rimCollapse";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
 import { isCodexBout, type MoveType, type NemesisSpec } from "../spec";
@@ -85,14 +88,31 @@ export interface Stage {
   /** Fetch the boss model for this spec (arena/player load eagerly; bosses stream in per silhouette). Resolves even if the model fails. */
   preloadBoss(spec: NemesisSpec, onProgress?: (fraction: number) => void): Promise<void>;
   setSky(url: string | null): void;
+  /** Portrait used by the `flatline` reward blocks; null clears it. */
+  setPortrait(url: string | null): void;
   setMode(mode: "attract" | "fight"): void;
-  /** Map a screen-relative stick (x = right, z = forward) into world space using the current camera yaw. */
+  /** Map a screen-relative stick (x = right, z = forward) into world space using the current camera yaw. Passes through once the arena is flat. */
   cameraRelative(move: Vec2): Vec2;
   /** Inverse of `cameraRelative`: a world-space direction expressed as screen right / screen forward. */
   screenRelative(dir: Vec2): Vec2;
   render(dt: number, state: BattleState, events: readonly BattleEvent[]): void;
   dispose(): void;
 }
+
+/** Side-on camera for `flatline` phases. fov 7 at ~90 m reads as orthographic; the elevation keeps floor telegraphs legible. */
+const FLAT_CAMERA = {
+  fov: 7,
+  elevation: 0.36,
+  lookHeight: 1.6,
+  minHalfHeight: 5.2,
+  /** horizontal padding around the two fighters, in world metres */
+  margin: 4,
+  /** the frame is hung a touch crooked, like a cartridge seated wrong */
+  roll: 0.03,
+  rampSeconds: 1.6,
+  /** the old floor sinks this far so the lane tiles stand proud of it */
+  floorDrop: 0.6,
+} as const;
 
 const BOSS_HEIGHTS: Record<NemesisSpec["identity"]["silhouette"], number> = {
   colossus: 4.5,
@@ -513,6 +533,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const hot = new THREE.Color(palette.hot);
   const post = createPostFX(renderer, scene, camera, tuning.post);
   const particles = createParticles(camera, accent);
+  const rimCollapse = createRimCollapse(particles);
+  const pillars = createPillars(particles, accent);
+  scene.add(rimCollapse.object, pillars.object);
   scene.add(particles.object);
   const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
   const prepareSkyTexture = (texture: THREE.Texture) => {
@@ -669,6 +692,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     breakup: { value: tuning.floor.breakup },
     apron: { value: tuning.floor.apron },
     ring: { value: tuning.floor.ring },
+    cut: { value: 2 },
   };
   const edgeFadeMaterial = new THREE.ShaderMaterial({
     transparent: true,
@@ -686,6 +710,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       uniform float breakup;
       uniform float apron;
       uniform float ring;
+      uniform float cut;
       varying vec2 vUv;
       float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float vnoise(vec2 p) {
@@ -703,11 +728,14 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         float edge = playRadius;
         float apronDark = smoothstep(edge - 0.004, edge + 0.01, r) * apron;
         float fade = smoothstep(0.62, 1.0, r);
+        // cut is where the collapsed rim ends: everything past it has fallen into the void.
+        float swallowed = smoothstep(cut - 0.04, cut + 0.015, r);
         float dark = clamp(patches + apronDark + fade * 0.92, 0.0, 0.96);
+        dark = max(dark, swallowed * 0.98);
         // Accent hairline exactly on the playable edge, with a soft inner glow so the boundary reads from any angle.
         float d = abs(r - edge) * worldRadius;
         float line = (1.0 - smoothstep(0.0, 0.08, d)) * 0.9 + (1.0 - smoothstep(0.0, 0.9, d)) * 0.22;
-        line *= ring * (1.0 - fade);
+        line *= ring * (1.0 - fade) * (1.0 - swallowed);
         vec3 tint = pow(fogTint, vec3(1.7));
         vec3 col = mix(tint, accent * 1.6, clamp(line, 0.0, 1.0));
         gl_FragColor = vec4(col, max(dark, line));
@@ -760,6 +788,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const bossShadow = makeShadow(4.4);
   scene.add(playerShadow, bossShadow);
   const hazards = createHazardView(scene);
+  const flatline = createFlatlineSet(DEFAULT_PALETTE);
+  scene.add(flatline.group);
 
   // Debug overlay: collision radii + player reach. Only drawn when debug.hitboxes is on.
   const debugMaterial = new THREE.LineBasicMaterial({ color: 0x4dff88, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false });
@@ -802,6 +832,12 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let attractAngle = 0;
   let first = true;
   let cameraYaw: number | null = null;
+  /** 0..1 blend toward the side-on `flatline` camera; ramps over FLAT_CAMERA.rampSeconds once the sim reports a flat arena. */
+  let flat = 0;
+  const chaseCamera = new THREE.Vector3();
+  const flatCamera = new THREE.Vector3();
+  const flatLook = new THREE.Vector3();
+  const flatLookBlend = new THREE.Vector3();
   let shake = 0;
   const shakeOffset = new THREE.Vector3();
   const hitKick = new THREE.Vector3();
@@ -1016,6 +1052,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (role === "floor" && object.material instanceof THREE.MeshToonMaterial) object.material.color.set(palette.floor);
     });
     hazards.setAccent(palette.accent);
+    flatline.setPalette(palette);
     hazards.setStyle(isCodexBout(spec) ? "terminal" : "void");
   };
 
@@ -1087,8 +1124,13 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     elapsed += step;
     const p = state.player;
     const b = state.boss;
-    player.position.set(p.pos.x, 0, p.pos.z);
+    player.position.set(p.pos.x, p.y, p.pos.z);
     boss.position.set(b.pos.x, 0, b.pos.z);
+    flat = THREE.MathUtils.clamp(flat + Math.sign((state.flat ? 1 : 0) - flat) * step / FLAT_CAMERA.rampSeconds, 0, 1);
+    const flatEase = easeInOut(flat);
+    flatline.update(flatEase, elapsed);
+    post.flatten(flatEase);
+    arenaRoot.position.y = -FLAT_CAMERA.floorDrop * flatEase;
     const fxOn = tuning.fx.particles && !reducedMotion.matches;
     for (const event of events) {
       if (event.type === "playerHit") {
@@ -1127,6 +1169,18 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
           particles.burst(burstAt, { count: 160, color: accent, color2: hot, speed: 9, spread: 1, lifeMs: 1400, size: 0.14, gravity: -1.5, drag: 1.4 });
         }
       }
+      if (event.type === "arenaShrink") {
+        shake = Math.max(shake, 0.5);
+        rimCollapse.collapse(event.from, event.to, event.ms);
+      }
+      if (event.type === "arenaPulse" && fxOn) {
+        burstAt.set(event.at.x, 0.3, event.at.z);
+        if (event.mutator === "ember") particles.burst(burstAt, { count: 40, color: 0xff6a2b, color2: 0x3a0a02, speed: 3.5, spread: 0.6, dir: UP, lifeMs: 900, size: 0.16, gravity: -2, drag: 1.2 });
+        else if (event.mutator === "tempest") particles.burst(burstAt, { count: 30, color: 0xcfe9ff, color2: accent, speed: 6, spread: 0.5, dir: UP, lifeMs: 500, size: 0.1, gravity: 4, drag: 2.5, stretch: 3 });
+        else particles.burst(burstAt, { count: 24, color: 0x8a0a1c, color2: 0x1a0205, speed: 2, spread: 1, lifeMs: 800, size: 0.2, gravity: 6, drag: 2 });
+      }
+      if (event.type === "obstaclesRaised") shake = Math.max(shake, 0.3);
+      if (event.type === "obstacleBroken") shake = Math.max(shake, 0.28);
       if (event.type === "bossStagger" && fxOn) {
         burstAt.copy(boss.position).setY(0.4);
         particles.burst(burstAt, { count: 40, color: 0x8a8578, color2: 0x1b1a1d, speed: 4, spread: 0.8, dir: UP, lifeMs: 800, size: 0.2, gravity: 8, drag: 1.5 });
@@ -1316,7 +1370,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     edgeFadeUniforms.breakup.value = tuning.floor.breakup;
     edgeFadeUniforms.apron.value = tuning.floor.apron;
     edgeFadeUniforms.ring.value = tuning.floor.ring;
-    if (scene.fog instanceof THREE.FogExp2) scene.fog.density = tuning.fog.density;
+    // The side camera sits ~90 m out; exponential fog would swallow the whole lane, so it thins with the collapse.
+    if (scene.fog instanceof THREE.FogExp2) scene.fog.density = tuning.fog.density * (1 - flatEase * 0.97);
 
     playerRadiusLine.visible = bossRadiusLine.visible = meleeRangeLine.visible = debug.hitboxes;
     if (debug.hitboxes) {
@@ -1336,7 +1391,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     }
 
     fovPunch = Math.max(0, fovPunch - step / 0.22);
-    const targetFov = tuning.camera.fov + easeOut(fovPunch) * 6 * tuning.camera.punch;
+    const targetFov = THREE.MathUtils.lerp(tuning.camera.fov, FLAT_CAMERA.fov, flatEase) + easeOut(fovPunch) * 6 * tuning.camera.punch;
     if (Math.abs(camera.fov - targetFov) > 0.01) {
       camera.fov = targetFov;
       camera.updateProjectionMatrix();
@@ -1360,14 +1415,27 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       lookGoal.set(player.position.x, 1.2, player.position.z)
         .lerp(lookBoss.set(boss.position.x, Math.min(boss.position.y + focusHeight, 2.6), boss.position.z), 0.66);
       if (first) {
-        camera.position.copy(desired);
+        chaseCamera.copy(desired);
         lookTarget.copy(lookGoal);
         first = false;
       } else {
-        camera.position.lerp(desired, 1 - Math.exp(-step * tuning.camera.lag));
+        chaseCamera.lerp(desired, 1 - Math.exp(-step * tuning.camera.lag));
         lookTarget.lerp(lookGoal, 1 - Math.exp(-step * tuning.camera.lookLag));
       }
-      camera.lookAt(lookTarget);
+      if (flat > 0) {
+        // Side-on, long lens, slightly raised: a near-orthographic platformer frame that still shows the floor telegraphs.
+        const spread = Math.abs(boss.position.x - player.position.x);
+        const halfHeight = Math.max(FLAT_CAMERA.minHalfHeight, (spread * 0.5 + FLAT_CAMERA.margin) / camera.aspect);
+        const distance = halfHeight / Math.tan(THREE.MathUtils.degToRad(FLAT_CAMERA.fov / 2));
+        flatLook.set((player.position.x + boss.position.x) / 2, FLAT_CAMERA.lookHeight, 0);
+        flatCamera.copy(flatLook).add(new THREE.Vector3(0, Math.sin(FLAT_CAMERA.elevation) * distance, Math.cos(FLAT_CAMERA.elevation) * distance));
+        camera.position.lerpVectors(chaseCamera, flatCamera, flatEase);
+        camera.lookAt(flatLookBlend.lerpVectors(lookTarget, flatLook, flatEase));
+        camera.rotateZ(FLAT_CAMERA.roll * flatEase);
+      } else {
+        camera.position.copy(chaseCamera);
+        camera.lookAt(lookTarget);
+      }
     } else {
       if (!reducedMotion.matches) attractAngle += step * 0.075;
       desired.set(Math.sin(attractAngle) * 15, 7.4, Math.cos(attractAngle) * 15);
@@ -1418,9 +1486,16 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     if (sigilMaterial) sigilMaterial.opacity = reducedMotion.matches ? 0.3 : 0.3 + Math.sin(elapsed * 0.72) * 0.08;
     playerShadow.position.x = player.position.x;
     playerShadow.position.z = player.position.z;
+    playerShadow.scale.setScalar(Math.max(0.45, 1 - p.y * 0.3));
     bossShadow.position.x = boss.position.x;
     bossShadow.position.z = boss.position.z;
     if (bossShadow.material instanceof THREE.MeshBasicMaterial) bossShadow.material.opacity = 0.45 + reveal * 0.35;
+    const rimScale = (state.arena.radius + (ARENA_FLOOR_RADIUS - ARENA_RADIUS)) / ARENA_FLOOR_RADIUS;
+    fracture.scale.setScalar(rimScale);
+    edgeFadeUniforms.cut.value = state.arena.radius < ARENA_RADIUS - 1e-3 ? rimScale / 1.25 : 2;
+    edgeFadeUniforms.playRadius.value = state.arena.radius / EDGE_FADE_RADIUS;
+    rimCollapse.update(reducedMotion.matches ? step * 3 : step);
+    pillars.sync(state, step, events);
     particles.ambient(fxOn && tuning.fx.ambient);
     particles.update(step);
     post.render(step);
@@ -1437,11 +1512,13 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     applySpec,
     preloadBoss,
     setSky,
+    setPortrait: (url) => flatline.setPortrait(url),
     setMode: (nextMode) => {
       cameraYaw = null;
       mode = nextMode;
     },
     cameraRelative: (move) => {
+      if (flat >= 0.5) return { x: move.x, z: move.z };
       camera.getWorldDirection(cameraForward).setY(0);
       if (cameraForward.lengthSq() < 1e-6) return move;
       cameraForward.normalize();
@@ -1469,6 +1546,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       disposeGroup(arenaRoot);
       disposeGroup(player);
       disposeGroup(boss);
+      flatline.dispose();
       const geometries = new Set<THREE.BufferGeometry>();
       const materials = new Set<THREE.Material>();
       const textures = new Set<THREE.Texture>();
@@ -1489,6 +1567,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (generatedSkyTexture) textures.add(generatedSkyTexture);
       for (const texture of textures) texture.dispose();
       if (library) disposeAssetLibrary(library);
+      rimCollapse.dispose();
+      pillars.dispose();
       particles.dispose();
       post.dispose();
       renderer.dispose();

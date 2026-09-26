@@ -1,12 +1,11 @@
-import type { Move, MoveType, NemesisSpec, Phase } from "../spec";
-import { ARENA_RADIUS, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
-
-const BOSS_LIMIT = ARENA_RADIUS - BOSS.radius - BOSS_EDGE_MARGIN;
+import type { Move, MoveType, NemesisSpec, Phase, PhaseRule } from "../spec";
+import { ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, FLAT, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
 import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
 import type { AttackSpec } from "./constants";
-import type { BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerCommand, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
+import type { ArenaState, BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, HazardSource, Obstacle, PlayerCommand, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
 import { add, clampToDisc, dist, dot, len, norm, perp, rotate, scale, sub, vec } from "./vec";
+import { initialMutatorT, initialWind, mutatorForElement, onPlayerWounded, stepMutator } from "./arena";
 
 /** Lab-only switches. All default off; the shipped game never touches them. */
 export interface BattleDebug {
@@ -16,6 +15,8 @@ export interface BattleDebug {
   playerInvulnerable: boolean;
   /** Start `type` immediately (idle boss only). Returns false if the boss is busy or the move is not in any phase. */
   forceMove(type: MoveType, template?: Partial<Move>): boolean;
+  /** Apply an arena rule now, as if the current phase had just begun with it. */
+  forceRule(rule: PhaseRule): void;
 }
 
 export interface Battle {
@@ -26,7 +27,7 @@ export interface Battle {
   step(input: PlayerInput): BattleEvent[];
 }
 
-export const IDLE_INPUT: PlayerInput = { move: vec(), light: false, heavy: false, roll: false };
+export const IDLE_INPUT: PlayerInput = { move: vec(), light: false, heavy: false, roll: false, jump: false };
 
 const emptyLog = (): DeathLog => ({
   durationMs: 0,
@@ -44,13 +45,20 @@ const emptyLog = (): DeathLog => ({
 });
 
 export function createInitialState(spec: NemesisSpec, seed: number): BattleState {
-  return {
+  const mutator = mutatorForElement(spec.identity.element);
+  const arena: ArenaState = {
+    radius: ARENA_RADIUS, targetRadius: ARENA_RADIUS, shrinkFrom: ARENA_RADIUS, shrinkT: 0, shrinkMs: 0, obstacles: [],
+    mutator, mutatorT: initialMutatorT(mutator), wind: initialWind(mutator, createRng(seed ^ 0x5bd1e995)),
+  };
+  const state: BattleState = {
     seed,
+    arena,
     timeMs: 0,
     outcome: "fighting",
+    flat: spec.phases[0]?.rule === "flatline",
     player: {
       pos: vec(0, 5), facing: vec(0, -1), hp: PLAYER.maxHp, stamina: PLAYER.maxStamina,
-      action: "idle", actionT: 0, rollDir: vec(0, -1), attackLanded: false, staminaRegenDelay: 0, hitFlash: 0,
+      action: "idle", actionT: 0, rollDir: vec(0, -1), attackLanded: false, staminaRegenDelay: 0, hitFlash: 0, y: 0, vy: 0,
       comboIndex: 0, comboIdleT: PLAYER.comboResetMs, charge: 0, charging: false, buffered: null,
       hurtT: 0, knockDir: vec(0, 1), knockT: 0, rollPerfect: false, recentRolls: [],
     },
@@ -65,7 +73,103 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
     log: emptyLog(),
     tauntT: BOSS.tauntEveryMs * 0.6,
   };
+  const opening = spec.phases[0];
+  if (opening) applyPhaseRule(state, opening, null);
+  return state;
 }
+
+/**
+ * Arena side of a phase rule. `closing_ring` shrinks the disc; with `events` the shrink eases in over
+ * `ARENA_SHRINK.shrinkMs` and is announced, without (opening phase) it applies instantly.
+ * `pillars` raises a ring of breakable cover around the fighters, replacing any cover still standing.
+ */
+export function applyPhaseRule(state: BattleState, phase: Phase, events: BattleEvent[] | null): void {
+  const arena = state.arena;
+  if (phase.rule === "flatline") {
+    // Cover from an earlier phase has no place on the lane: it shatters as the arena folds.
+    for (const o of arena.obstacles) events?.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by: "arena" });
+    arena.obstacles = [];
+    return;
+  }
+  if (phase.rule === "pillars") {
+    const centre = scale(add(state.player.pos, state.boss.pos), 0.5);
+    const axis = norm(sub(state.player.pos, state.boss.pos));
+    const limit = arena.targetRadius - PLAYER_EDGE_MARGIN - ARENA_PILLARS.radius - 0.5;
+    const ids: number[] = [];
+    arena.obstacles = [];
+    for (let i = 0; i < ARENA_PILLARS.count; i += 1) {
+      // Offset by half a step so no pillar sits on the line between the fighters at the moment it rises.
+      const dir = rotate(axis, (Math.PI * 2 * (i + 0.5)) / ARENA_PILLARS.count);
+      let pos = clampToDisc(add(centre, dir, ARENA_PILLARS.ring), limit);
+      for (const body of [state.player.pos, state.boss.pos]) {
+        const gap = ARENA_PILLARS.radius + BOSS.radius + 0.4;
+        if (dist(pos, body) < gap) pos = clampToDisc(add(body, norm(sub(pos, body), dir), gap), limit);
+      }
+      const obstacle: Obstacle = { id: state.nextId++, pos, radius: ARENA_PILLARS.radius, hp: ARENA_PILLARS.hp, age: events ? 0 : ARENA_PILLARS.riseMs };
+      arena.obstacles.push(obstacle);
+      ids.push(obstacle.id);
+    }
+    events?.push({ type: "obstaclesRaised", ids });
+    return;
+  }
+  if (phase.rule !== "closing_ring") return;
+  const to = Math.max(ARENA_SHRINK.minRadius, arena.targetRadius * ARENA_SHRINK.factor);
+  if (to >= arena.targetRadius - 1e-6) return;
+  arena.shrinkFrom = arena.radius;
+  arena.targetRadius = to;
+  if (!events) {
+    arena.radius = to;
+    arena.shrinkT = arena.shrinkMs = 0;
+    return;
+  }
+  arena.shrinkT = 0;
+  arena.shrinkMs = ARENA_SHRINK.shrinkMs;
+  events.push({ type: "arenaShrink", from: arena.shrinkFrom, to, ms: arena.shrinkMs });
+}
+
+const solid = (o: Obstacle) => o.age >= ARENA_PILLARS.riseMs;
+
+/** Push a body of `radius` out of every standing pillar. Purely positional, so a chaser slides around cover. */
+export function separateFromObstacles(pos: Vec2, radius: number, obstacles: readonly Obstacle[]): Vec2 {
+  let out = pos;
+  for (const o of obstacles) {
+    if (!solid(o)) continue;
+    const gap = o.radius + radius;
+    const d = dist(out, o.pos);
+    if (d >= gap) continue;
+    out = add(o.pos, norm(sub(out, o.pos), { x: 0, z: 1 }), gap);
+  }
+  return out;
+}
+
+/** True when the segment a→b passes through a standing pillar (used by projectiles and the bot's cover check). */
+export function blockedByObstacle(a: Vec2, b: Vec2, obstacles: readonly Obstacle[], pad = 0): Obstacle | null {
+  const ab = sub(b, a);
+  const l2 = dot(ab, ab);
+  for (const o of obstacles) {
+    if (!solid(o)) continue;
+    const t = l2 < 1e-9 ? 0 : Math.max(0, Math.min(1, dot(sub(o.pos, a), ab) / l2));
+    if (dist(add(a, ab, t), o.pos) <= o.radius + pad) return o;
+  }
+  return null;
+}
+
+const stepArena = (state: BattleState, events: BattleEvent[]) => {
+  const arena = state.arena;
+  for (const o of arena.obstacles) o.age = Math.min(ARENA_PILLARS.riseMs, o.age + TICK_MS);
+  if (arena.shrinkT >= arena.shrinkMs) return;
+  arena.shrinkT = Math.min(arena.shrinkMs, arena.shrinkT + TICK_MS);
+  const u = arena.shrinkT / arena.shrinkMs;
+  const ease = u * u * (3 - 2 * u);
+  arena.radius = arena.shrinkFrom + (arena.targetRadius - arena.shrinkFrom) * ease;
+  // Cover standing on the collapsing rim goes down with it.
+  const keep: Obstacle[] = [];
+  for (const o of arena.obstacles) {
+    if (len(o.pos) + o.radius > arena.radius - PLAYER_EDGE_MARGIN) events.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by: "arena" });
+    else keep.push(o);
+  }
+  arena.obstacles = keep;
+};
 
 const idleGap = (aggression: number) => BOSS.idleMs.slow + (BOSS.idleMs.fast - BOSS.idleMs.slow) * aggression;
 
@@ -112,8 +216,28 @@ export function moveTiming(type: MoveType): { activeMs: number; recoverMs: numbe
 export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const state = createInitialState(spec, seed);
   const rng: Rng = createRng(seed);
+  /** Arena pulses draw from their own stream so weather never reshuffles the boss's move choices. */
+  const arenaRng: Rng = createRng(seed ^ 0x5bd1e995);
   const pendingEvents: BattleEvent[] = [];
   const tickAttack = (attack: AttackSpec) => attack.windupMs + attack.activeMs + attack.recoverMs;
+  const bossLimit = () => state.arena.radius - BOSS.radius - BOSS_EDGE_MARGIN;
+
+  const damageObstacle = (o: Obstacle, amount: number, by: HazardSource, events: BattleEvent[]) => {
+    o.hp -= amount;
+    if (o.hp > 0) {
+      events.push({ type: "obstacleHit", id: o.id, hpLeft: o.hp, by });
+      return;
+    }
+    state.arena.obstacles = state.arena.obstacles.filter((x) => x !== o);
+    events.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by });
+  };
+
+  /** Strike hazards chip every pillar their shape covers the moment they land. */
+  const strikeObstacles = (shape: HazardShape, amount: number, by: MoveType, events: BattleEvent[]) => {
+    for (const o of [...state.arena.obstacles]) {
+      if (solid(o) && overlaps(shape, o.pos, o.radius)) damageObstacle(o, amount, by, events);
+    }
+  };
 
   // ---- player -------------------------------------------------------------------------------
   const rollDirectionLabel = (dir: Vec2, toBoss: Vec2): keyof DeathLog["rolls"] => {
@@ -132,6 +256,16 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     p.stamina = Math.max(0, p.stamina - cost);
     p.staminaRegenDelay = PLAYER.staminaRegenDelayMs;
   };
+
+  /** Pull a position onto the lane (z = 0) over a few ticks. */
+  const snapToLane = (pos: Vec2) => {
+    pos.z *= FLAT.laneSnap;
+    if (Math.abs(pos.z) < 0.01) pos.z = 0;
+  };
+
+  const grounded = (p: PlayerState) => p.y <= 0 && p.vy <= 0;
+  /** Airborne enough to clear a ground hazard (flat phases only). */
+  const clearsGround = () => state.flat && state.player.y >= FLAT.groundHazardHeight;
 
   /** Fraction of the current attack's recover window elapsed, or -1 while still winding up / active. */
   const recoverFraction = (p: PlayerState): number => {
@@ -160,11 +294,11 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     }
   };
 
-  const startCommand = (kind: PlayerCommand, stick: Vec2, input: PlayerInput, toBoss: Vec2, events: BattleEvent[]) => {
+  const startCommand = (kind: PlayerCommand, stick: Vec2, nowStick: Vec2, input: PlayerInput, toBoss: Vec2, events: BattleEvent[]) => {
     const p = state.player;
     if (kind === "roll") {
       if (p.stamina < PLAYER.roll.stamina) return;
-      const wants = len(stick) > 0.01 ? norm(stick) : len(input.move) > 0.01 ? norm(input.move) : scale(toBoss, -1);
+      const wants = len(stick) > 0.01 ? norm(stick) : len(nowStick) > 0.01 ? norm(nowStick) : scale(toBoss, -1);
       p.rollDir = wants;
       startAction(p, "roll", PLAYER.roll.stamina);
       p.rollPerfect = false;
@@ -199,21 +333,32 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const stepPlayer = (input: PlayerInput, events: BattleEvent[]) => {
     const p = state.player;
     const b = state.boss;
+    const flat = state.flat;
+    if (flat) snapToLane(p.pos);
     const toBoss = norm(sub(b.pos, p.pos));
-    const wants = norm(input.move, vec());
-    const moving = len(input.move) > 0.01;
+    const stick = flat ? vec(input.move.x, 0) : input.move;
+    const wants = norm(stick, vec());
+    const moving = len(stick) > 0.01;
+    const onGround = !flat || grounded(p);
+
+    if (flat && input.jump && grounded(p) && (p.action === "idle" || p.action === "roll")) {
+      p.action = "idle";
+      p.vy = FLAT.jumpVelocity;
+    }
 
     // Presses are queued (latest wins) and fire as soon as the current action opens a window for them.
+    // On the lane Space is the jump, so it never queues a roll; airborne presses wait for the landing.
     if (p.buffered) {
       p.buffered.age += TICK_MS;
       if (p.buffered.age > PLAYER.bufferMs) p.buffered = null;
     }
-    const pressed: PlayerCommand | null = input.roll ? "roll" : input.heavy ? "heavy" : input.light ? "light" : null;
-    if (pressed) p.buffered = { kind: pressed, move: { ...input.move }, age: 0 };
-    if (p.buffered && accepts(p, p.buffered.kind)) {
+    const rollPressed = input.roll && !(flat && input.jump);
+    const pressed: PlayerCommand | null = rollPressed ? "roll" : input.heavy ? "heavy" : input.light ? "light" : null;
+    if (pressed) p.buffered = { kind: pressed, move: { ...stick }, age: 0 };
+    if (p.buffered && onGround && accepts(p, p.buffered.kind)) {
       const command = p.buffered;
       p.buffered = null;
-      startCommand(command.kind, command.move, input, toBoss, events);
+      startCommand(command.kind, command.move, stick, input, toBoss, events);
     }
 
     if (p.action === "idle") {
@@ -260,8 +405,21 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       p.knockT = Math.max(0, p.knockT - TICK_MS);
       p.pos = add(p.pos, p.knockDir, (PLAYER.hurt.knockback / PLAYER.hurt.knockbackMs) * TICK_MS);
     }
-    p.pos = clampToDisc(p.pos, ARENA_RADIUS - PLAYER_EDGE_MARGIN);
     p.hurtT = Math.max(0, p.hurtT - TICK_MS);
+
+    if (flat) {
+      p.vy -= (FLAT.gravity * TICK_MS) / 1000;
+      p.y += (p.vy * TICK_MS) / 1000;
+      if (p.y <= 0) { p.y = 0; p.vy = 0; }
+      if (p.vy < 0 && p.y >= FLAT.stomp.minY && p.y <= FLAT.stomp.maxY && dist(p.pos, b.pos) <= BOSS.radius + PLAYER.radius && b.invulnerableT <= 0) {
+        p.vy = FLAT.jumpVelocity * FLAT.stomp.bounce;
+        state.log.lightAttacks += 1;
+        hitBoss(PLAYER.light.damage, PLAYER.light.poise, false, events, 0, 0);
+      }
+    }
+
+    if (state.arena.mutator === "tempest") p.pos = add(p.pos, state.arena.wind, TICK_MS / 1000);
+    p.pos = clampToDisc(separateFromObstacles(p.pos, PLAYER.radius, state.arena.obstacles), state.arena.radius - PLAYER_EDGE_MARGIN);
     p.staminaRegenDelay = Math.max(0, p.staminaRegenDelay - TICK_MS);
     if (p.staminaRegenDelay === 0 && p.action !== "roll") p.stamina = Math.min(PLAYER.maxStamina, p.stamina + (PLAYER.staminaRegenPerSec * TICK_MS) / 1000);
     p.hitFlash = Math.max(0, p.hitFlash - TICK_MS);
@@ -276,7 +434,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
 
   const playerInvulnerable = () => state.player.action === "roll" && state.player.actionT <= PLAYER.roll.iframeMs;
 
-  const hurtPlayer = (damage: number, source: MoveType, events: BattleEvent[], from?: Vec2) => {
+  const hurtPlayer = (damage: number, source: HazardSource, events: BattleEvent[], from?: Vec2) => {
     const p = state.player;
     if (state.outcome !== "fighting") return;
     if (p.hurtT > 0) return;
@@ -295,14 +453,18 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     p.hurtT = PLAYER.hurt.invulnMs;
     const away = from ? sub(p.pos, from) : sub(p.pos, state.boss.pos);
     p.knockDir = norm(away, scale(state.player.facing, -1));
-    p.knockT = PLAYER.hurt.knockbackMs;
-    p.action = "hurt";
-    p.actionT = 0;
-    p.charging = false;
-    p.charge = 0;
-    p.comboIdleT = PLAYER.comboResetMs;
+    // Weather ticks (pools, vents, bolts) burn without shoving: only the boss's own blows knock and stun.
+    if (source !== "arena") {
+      p.knockT = PLAYER.hurt.knockbackMs;
+      p.action = "hurt";
+      p.actionT = 0;
+      p.charging = false;
+      p.charge = 0;
+      p.comboIdleT = PLAYER.comboResetMs;
+    }
     state.log.hitsTaken[source] = (state.log.hitsTaken[source] ?? 0) + 1;
     events.push({ type: "playerHit", move: source, damage, hp: p.hp, dir: { ...p.knockDir } });
+    onPlayerWounded(state, source, spawnArenaHazard, events);
     if (p.hp <= 0) {
       state.outcome = "playerDead";
       state.log.killedBy = source;
@@ -320,7 +482,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const hitBoss = (damage: number, poise: number, heavy: boolean, events: BattleEvent[], combo: number, charge: number) => {
     const b = state.boss;
     const weakness = b.weaknessT > 0;
-    const dealt = Math.round(damage * (weakness ? spec.weakness.multiplier : 1));
+    const dealt = Math.round(damage * (spec.stats.playerDamage ?? 1) * (weakness ? spec.weakness.multiplier : 1));
     b.hp = Math.max(0, b.hp - dealt);
     b.hitFlash = 120;
     b.poiseDamage += poise;
@@ -387,11 +549,12 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     events.push({ type: "telegraph", move: move.type, ms: telegraphMs });
   };
 
-  const spawnHazard = (source: MoveType, shape: Hazard["shape"], damage: number, ttl: number, repeat = false): Hazard => {
-    const hazard: Hazard = { id: state.nextId++, source, shape, damage, ttl, cooldown: 0, repeat, hit: false };
+  const spawnHazard = (source: HazardSource, shape: Hazard["shape"], damage: number, ttl: number, repeat = false, armMs = 0): Hazard => {
+    const hazard: Hazard = { id: state.nextId++, source, shape, damage, ttl, cooldown: 0, repeat, hit: false, armMs, armT: armMs };
     state.hazards.push(hazard);
     return hazard;
   };
+  const spawnArenaHazard = (shape: HazardShape, damage: number, ttl: number, repeat: boolean, armMs: number) => spawnHazard("arena", shape, damage, ttl, repeat, armMs);
 
   const activateMove = (current: BossMove, events: BattleEvent[]) => {
     const b = state.boss;
@@ -400,43 +563,56 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     b.facing = dir;
     events.push({ type: "moveActive", move: move.type });
     switch (move.type) {
-      case "sweep":
-        spawnHazard("sweep", { kind: "arc", center: { ...b.pos }, radius: MOVE.sweep.radius * move.scale, dir, halfAngle: MOVE.sweep.halfAngle }, move.damage, MOVE.sweep.activeMs);
+      case "sweep": {
+        const h = spawnHazard("sweep", { kind: "arc", center: { ...b.pos }, radius: MOVE.sweep.radius * move.scale, dir, halfAngle: MOVE.sweep.halfAngle }, move.damage, MOVE.sweep.activeMs);
+        strikeObstacles(h.shape, ARENA_PILLARS.damage.sweep, "sweep", events);
         break;
-      case "thrust":
-        spawnHazard("thrust", { kind: "line", start: { ...b.pos }, dir, length: MOVE.thrust.length * move.scale, halfWidth: MOVE.thrust.halfWidth * move.scale }, move.damage, MOVE.thrust.activeMs);
+      }
+      case "thrust": {
+        const h = spawnHazard("thrust", { kind: "line", start: { ...b.pos }, dir, length: MOVE.thrust.length * move.scale, halfWidth: MOVE.thrust.halfWidth * move.scale }, move.damage, MOVE.thrust.activeMs);
+        strikeObstacles(h.shape, ARENA_PILLARS.damage.thrust, "thrust", events);
         break;
-      case "nova":
-        spawnHazard("nova", { kind: "circle", center: { ...b.pos }, radius: MOVE.nova.radius * move.scale }, move.damage, MOVE.nova.activeMs);
+      }
+      case "nova": {
+        const h = spawnHazard("nova", { kind: "circle", center: { ...b.pos }, radius: MOVE.nova.radius * move.scale }, move.damage, MOVE.nova.activeMs);
+        strikeObstacles(h.shape, ARENA_PILLARS.damage.nova, "nova", events);
         break;
+      }
       case "charge":
         current.travel = scale(dir, MOVE.charge.speed);
         break;
       case "ring":
         for (let i = 0; i < move.count; i += 1) {
-          const h = spawnHazard("ring", { kind: "ring", center: { ...b.pos }, radius: MOVE.ring.startRadius - (MOVE.ring.growth * MOVE.ring.waveGapMs * i) / 1000, thickness: MOVE.ring.thickness * move.scale, growth: MOVE.ring.growth, maxRadius: ARENA_RADIUS + 1 }, move.damage, 60000);
+          const h = spawnHazard("ring", { kind: "ring", center: { ...b.pos }, radius: MOVE.ring.startRadius - (MOVE.ring.growth * MOVE.ring.waveGapMs * i) / 1000, thickness: MOVE.ring.thickness * move.scale, growth: MOVE.ring.growth, maxRadius: state.arena.radius + 1 }, move.damage, 60000);
           h.cooldown = 0;
         }
         break;
       case "volley": {
         const spread = MOVE.volley.spread * move.scale;
         for (let i = 0; i < move.count; i += 1) {
+          if (state.flat) {
+            // One lane, so the fan becomes a stream: shots queue up behind the boss on a low or high line.
+            const lane = norm(vec(dir.x, 0), vec(b.facing.x < 0 ? -1 : 1, 0));
+            const y = rng.next() < 0.5 ? FLAT.volley.lowY : FLAT.volley.highY;
+            state.projectiles.push({ id: state.nextId++, pos: add(b.pos, lane, BOSS.radius - i * FLAT.volley.gap), vel: scale(lane, MOVE.volley.speed), y, radius: MOVE.volley.radius * move.scale, damage: move.damage });
+            continue;
+          }
           const angle = move.count === 1 ? 0 : -spread / 2 + (spread * i) / (move.count - 1);
-          const projectile: Projectile = { id: state.nextId++, pos: add(b.pos, dir, BOSS.radius), vel: scale(rotate(dir, angle), MOVE.volley.speed), radius: MOVE.volley.radius * move.scale, damage: move.damage };
+          const projectile: Projectile = { id: state.nextId++, pos: add(b.pos, dir, BOSS.radius), vel: scale(rotate(dir, angle), MOVE.volley.speed), y: 1, radius: MOVE.volley.radius * move.scale, damage: move.damage };
           state.projectiles.push(projectile);
         }
         break;
       }
       case "zone":
         for (let i = 0; i < move.count; i += 1) {
-          const offset = i === 0 ? vec() : rotate(vec(0, MOVE.zone.scatter), rng.range(0, Math.PI * 2));
-          const center = clampToDisc(add(current.aim, offset), ARENA_RADIUS - 0.5);
+          const offset = i === 0 ? vec() : state.flat ? vec(rng.range(-1.6, 1.6) * MOVE.zone.scatter, 0) : rotate(vec(0, MOVE.zone.scatter), rng.range(0, Math.PI * 2));
+          const center = clampToDisc(add(current.aim, offset), state.arena.radius - 0.5);
           spawnHazard("zone", { kind: "circle", center, radius: MOVE.zone.radius * move.scale }, move.damage, MOVE.zone.ttlMs, true);
         }
         break;
       case "blink": {
         const behind = norm(sub(state.player.pos, b.pos));
-        b.pos = clampToDisc(add(state.player.pos, behind, MOVE.blink.distanceBehind), BOSS_LIMIT);
+        b.pos = clampToDisc(separateFromObstacles(add(state.player.pos, behind, MOVE.blink.distanceBehind), BOSS.radius, state.arena.obstacles), bossLimit());
         b.facing = scale(behind, -1);
         if (spec.weakness.trigger === "after_blink") openWeakness(events);
         break;
@@ -464,11 +640,14 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         b.idleFor = BOSS.phaseChangeInvulnMs + 300;
         state.hazards = [];
         state.projectiles = [];
+        if (phase.rule === "flatline") state.flat = true;
         events.push({ type: "phaseChange", phaseIndex: i });
+        applyPhaseRule(state, phase, events);
         break;
       }
     }
 
+    if (state.flat) snapToLane(b.pos);
     if (b.staggerT > 0) { b.staggerT = Math.max(0, b.staggerT - TICK_MS); return; }
 
     const phase = currentPhase(spec, b);
@@ -482,7 +661,17 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         events.push({ type: "taunt", index: Math.floor(rng.next() * spec.voice.lines.taunt.length) });
       }
       b.facing = toPlayer;
-      if (dist(b.pos, p.pos) > BOSS.meleeRange) b.pos = clampToDisc(add(b.pos, toPlayer, (BOSS.walkSpeed * TICK_MS) / 1000), BOSS_LIMIT);
+      if (dist(b.pos, p.pos) > BOSS.meleeRange) {
+        const stepLen = (BOSS.walkSpeed * TICK_MS) / 1000;
+        let next = add(b.pos, toPlayer, stepLen);
+        const cover = blockedByObstacle(b.pos, next, state.arena.obstacles, BOSS.radius);
+        if (cover) {
+          // Slide around cover instead of grinding into it: pick the tangent that keeps closing on the player.
+          const side = perp(norm(sub(cover.pos, b.pos)));
+          next = add(b.pos, side, stepLen * (dot(side, toPlayer) >= 0 ? 1 : -1));
+        }
+        b.pos = clampToDisc(separateFromObstacles(next, BOSS.radius, state.arena.obstacles), bossLimit());
+      }
       if (debug.bossAi && b.idleT >= b.idleFor && b.invulnerableT <= 0) {
         beginMove(chooseMove(phase), false, events);
         b.idleT = 0;
@@ -500,7 +689,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       b.facing = norm(sub(current.aim, b.pos), b.facing);
       // Melee swings step in while winding up so a player backing off is still met by the arc.
       if (isMelee(current.move.type) && dist(b.pos, p.pos) > BOSS.meleeRange * 0.75) {
-        b.pos = clampToDisc(add(b.pos, b.facing, (BOSS.walkSpeed * 0.55 * TICK_MS) / 1000), BOSS_LIMIT);
+        b.pos = clampToDisc(add(b.pos, b.facing, (BOSS.walkSpeed * 0.55 * TICK_MS) / 1000), bossLimit());
       }
       if (current.t >= current.telegraphMs) {
         current.phase = "active";
@@ -511,8 +700,11 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     }
     if (current.phase === "active") {
       if (current.move.type === "charge") {
-        b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), BOSS_LIMIT);
-        if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned) {
+        b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), bossLimit());
+        for (const o of [...state.arena.obstacles]) {
+          if (solid(o) && dist(b.pos, o.pos) <= o.radius + MOVE.charge.hitRadius * current.move.scale) damageObstacle(o, ARENA_PILLARS.damage.charge, "charge", events);
+        }
+        if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned && !clearsGround()) {
           current.spawned = true;
           hurtPlayer(current.move.damage, "charge", events, b.pos);
         }
@@ -538,8 +730,8 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     for (const raw of state.hazards) {
       const h = advanceHazard(raw, TICK_MS);
       if (h.ttl <= 0) continue;
-      const canHit = h.repeat ? h.cooldown <= 0 : !h.hit;
-      if (canHit && overlaps(h.shape, p.pos, PLAYER.radius)) {
+      const canHit = h.armT <= 0 && (h.repeat ? h.cooldown <= 0 : !h.hit);
+      if (canHit && !clearsGround() && overlaps(h.shape, p.pos, PLAYER.radius)) {
         // A dodged swing is spent: rolling through the front of a hitbox never gets clipped by its tail.
         h.hit = true;
         h.cooldown = MOVE.zone.tickMs;
@@ -552,9 +744,17 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
 
     const alive: Projectile[] = [];
     for (const pr of state.projectiles) {
+      const from = pr.pos;
       pr.pos = add(pr.pos, pr.vel, TICK_MS / 1000);
-      if (len(pr.pos) > ARENA_RADIUS + 1) continue;
-      if (dist(pr.pos, p.pos) <= pr.radius + PLAYER.radius) {
+      // Flat volleys queue up outside the disc behind the boss; only drop shots that are leaving.
+      if (len(pr.pos) > state.arena.radius + 1 && dot(pr.pos, pr.vel) > 0) continue;
+      const cover = blockedByObstacle(from, pr.pos, state.arena.obstacles, pr.radius);
+      if (cover) {
+        events.push({ type: "obstacleHit", id: cover.id, hpLeft: cover.hp, by: "volley" });
+        continue;
+      }
+      const inHeight = !state.flat || Math.abs(pr.y - (p.y + PLAYER.radius)) <= pr.radius + PLAYER.radius;
+      if (inHeight && dist(pr.pos, p.pos) <= pr.radius + PLAYER.radius) {
         hurtPlayer(pr.damage, "volley", events, sub(p.pos, pr.vel));
         continue;
       }
@@ -568,6 +768,8 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     if (state.outcome !== "fighting") return events;
     if (pendingEvents.length > 0) events.push(...pendingEvents.splice(0));
     state.timeMs += TICK_MS;
+    stepArena(state, events);
+    stepMutator(state, TICK_MS, arenaRng, spawnArenaHazard, events);
     stepPlayer(input, events);
     if (state.outcome !== "fighting") return events;
     stepBoss(events);
@@ -590,13 +792,18 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       pendingEvents.push(...events);
       return true;
     },
+    forceRule(rule) {
+      const phase = spec.phases[state.boss.phaseIndex] ?? spec.phases[0];
+      if (!phase || state.outcome !== "fighting") return;
+      applyPhaseRule(state, { ...phase, rule }, pendingEvents);
+    },
   };
 
   return { spec, state, debug, step };
 }
 
 /** Ground decal to draw while a move is telegraphed: the same geometry the hitbox will use. */
-export function previewShape(current: BossMove, boss: BossState): HazardShape | null {
+export function previewShape(current: BossMove, boss: BossState, arenaRadius = ARENA_RADIUS): HazardShape | null {
   const { move } = current;
   const dir = norm(sub(current.aim, boss.pos), boss.facing);
   switch (move.type) {
@@ -604,8 +811,8 @@ export function previewShape(current: BossMove, boss: BossState): HazardShape | 
     case "thrust": return { kind: "line", start: boss.pos, dir, length: MOVE.thrust.length * move.scale, halfWidth: MOVE.thrust.halfWidth * move.scale };
     case "charge": return { kind: "line", start: boss.pos, dir, length: (MOVE.charge.speed * MOVE.charge.activeMs) / 1000, halfWidth: MOVE.charge.hitRadius * move.scale };
     case "nova": return { kind: "circle", center: boss.pos, radius: MOVE.nova.radius * move.scale };
-    case "ring": return { kind: "ring", center: boss.pos, radius: MOVE.ring.startRadius, thickness: MOVE.ring.thickness * move.scale, growth: 0, maxRadius: ARENA_RADIUS };
-    case "volley": return { kind: "arc", center: boss.pos, radius: ARENA_RADIUS, dir, halfAngle: (MOVE.volley.spread * move.scale) / 2 };
+    case "ring": return { kind: "ring", center: boss.pos, radius: MOVE.ring.startRadius, thickness: MOVE.ring.thickness * move.scale, growth: 0, maxRadius: arenaRadius };
+    case "volley": return { kind: "arc", center: boss.pos, radius: arenaRadius, dir, halfAngle: (MOVE.volley.spread * move.scale) / 2 };
     case "zone": return { kind: "circle", center: current.aim, radius: MOVE.zone.radius * move.scale };
     case "blink": return null;
   }

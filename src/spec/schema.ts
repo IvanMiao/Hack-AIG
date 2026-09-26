@@ -68,6 +68,7 @@ export const forgeDraftSchema: JSONSchemaType<ForgeDraft> = {
         maxHp: { type: "number" },
         poise: { type: "number" },
         aggression: { type: "number" },
+        playerDamage: { type: "number", nullable: true },
       },
       required: ["maxHp", "poise", "aggression"],
       additionalProperties: false,

@@ -4,6 +4,31 @@ export const ARENA_RADIUS = 27;
 export const ARENA_FLOOR_RADIUS = ARENA_RADIUS + 2;
 export const PLAYER_EDGE_MARGIN = 0.8;
 export const BOSS_EDGE_MARGIN = 1.6;
+/** `closing_ring` phase rule: each ringed phase multiplies the playable radius, eased over `shrinkMs`. */
+export const ARENA_SHRINK = {
+  factor: 0.7,
+  minRadius: ARENA_RADIUS * 0.5,
+  shrinkMs: 4000,
+} as const;
+/** Element mutators. Every arena hazard telegraphs for `armMs` before it can hurt; zone-style ones tick at MOVE.zone rates. */
+export const ARENA_MUTATOR = {
+  /** fire: vents of magma open at random spots (never under the player) and burn for a while */
+  ember: { periodMs: 6500, count: 3, radius: 2.2, armMs: 1200, ttlMs: 3600, damage: 12, safeRadius: 3.5, spread: 0.7 },
+  /** storm: a slow wind drags the player; lightning targets where they stand */
+  tempest: { windSpeed: 1.1, turnMs: 5000, boltPeriodMs: 7000, boltRadius: 2.4, boltArmMs: 1100, boltDamage: 14 },
+  /** blood: every wound leaves a pool that punishes standing in it */
+  bloodtide: { poolRadius: 1.6, armMs: 900, ttlMs: 6000, damage: 8 },
+} as const;
+/** `pillars` phase rule: breakable cover raised around the fighters. Only boss strikes chip them; projectiles are blocked. */
+export const ARENA_PILLARS = {
+  count: 4,
+  radius: 1.0,
+  hp: 2,
+  /** distance from the player/boss midpoint at which the ring of pillars rises */
+  ring: 5.5,
+  riseMs: 900,
+  damage: { charge: 2, sweep: 1, thrust: 1, nova: 1 },
+} as const;
 
 export interface AttackSpec {
   windupMs: number;
@@ -82,4 +107,18 @@ export const MOVE = {
   volley: { recoverMs: 700, speed: 11, radius: 0.5, spread: 0.55 },
   zone: { recoverMs: 600, radius: 1.9, ttlMs: 3600, tickMs: 900, tickFraction: 0.5, scatter: 3.2 },
   blink: { activeMs: 120, recoverMs: 350, distanceBehind: 2.4 },
+} as const;
+
+/** `flatline` phase rule: the arena collapses onto the x axis, the player gains a jump and hazards gain a height. */
+export const FLAT = {
+  /** per-tick decay of z toward the lane, so the collapse takes ~0.4 s instead of snapping */
+  laneSnap: 0.86,
+  jumpVelocity: 9.5,
+  gravity: 26,
+  /** ground hazards (sweep, thrust, nova, ring, zone, charge) miss a player whose feet are above this */
+  groundHazardHeight: 1.1,
+  /** volley shots stream in from behind the boss on two lanes: low ones are jumped, high ones are ducked under by staying down */
+  volley: { lowY: 0.5, highY: 2.0, gap: 4.5 },
+  /** landing on the boss from above counts as a light hit and bounces the player back up */
+  stomp: { minY: 0.9, maxY: 2.6, bounce: 0.75 },
 } as const;

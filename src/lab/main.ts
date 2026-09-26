@@ -11,7 +11,7 @@ import { createStage, DEFAULT_TUNING } from "../game/createStage";
 import { createCombatInput } from "../game/input";
 import { ELEMENT_PALETTES } from "../game/render/palette";
 import { BOSS, createBattle, MOVE, PLAYER, rangeBand, TICK_MS, type Battle, type BattleEvent } from "../sim";
-import { ELEMENTS, FALLBACK_SPECS, MOVE_TYPES, type Element, type MoveType, type NemesisSpec } from "../spec";
+import { ELEMENTS, FALLBACK_SPECS, MOVE_TYPES, PHASE_RULES, type Element, type MoveType, type NemesisSpec, type PhaseRule } from "../spec";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends object ? Mutable<T[K]> : T[K] };
 
@@ -47,6 +47,8 @@ const lab = {
   hitboxes: false,
   freeCamera: false,
   forceMove: "sweep" as MoveType,
+  forceRule: "closing_ring" as PhaseRule,
+  mutator: "",
 };
 
 let battle: Battle = createBattle(FALLBACK_SPECS[0]!, lab.seed);
@@ -98,6 +100,11 @@ fight.add(lab, "invulnerable").name("player invulnerable").onChange((v: boolean)
 fight.add(lab, "autoRetry").name("auto reset on death");
 fight.add(lab, "forceMove", [...MOVE_TYPES]).name("force move");
 fight.add({ go: () => forceMove(lab.forceMove) }, "go").name("→ force now (1–8)");
+
+const arenaFolder = gui.addFolder("Arena");
+arenaFolder.add(lab, "mutator").name("mutator (element)").listen().disable();
+arenaFolder.add(lab, "forceRule", PHASE_RULES.filter((r) => r !== "none")).name("phase rule");
+arenaFolder.add({ go: () => { battle.debug.forceRule(lab.forceRule); pushEvent(`force rule <em>${lab.forceRule}</em>`); } }, "go").name("→ apply rule now");
 
 const debugFolder = gui.addFolder("Debug view");
 debugFolder.add(lab, "hitboxes").name("hitboxes (H)").listen().onChange((v: boolean) => { stage.debug.hitboxes = v; });
@@ -211,6 +218,8 @@ postFolder.add(tuning.post, "bloomRadius", 0, 1, 0.01);
 postFolder.add(tuning.post, "vignette", 0, 1.5, 0.01);
 postFolder.add(tuning.post, "grain", 0, 0.2, 0.001);
 postFolder.add(tuning.post, "aberration", 0, 0.01, 0.0001);
+postFolder.add(tuning.post, "pixelate", 1, 8, 1);
+postFolder.add(tuning.post, "posterize", 0, 16, 1);
 postFolder.add(tuning.post, "saturation", 0.5, 1.5, 0.01);
 const fx = lookFolder.addFolder("fx");
 fx.add(tuning.fx, "particles");
@@ -280,11 +289,17 @@ function afterStep(events: BattleEvent[]) {
       case "bossStagger": pushEvent("<em>boss staggered</em>"); hitStopMs = Math.max(hitStopMs, 220); break;
       case "weaknessOpen": pushEvent(`weakness open ${e.ms}ms`); break;
       case "phaseChange": pushEvent(`<em>phase ${e.phaseIndex + 1}</em>`); break;
+      case "arenaShrink": pushEvent(`arena shrinks ${e.from.toFixed(1)} → ${e.to.toFixed(1)} over ${e.ms}ms`); break;
+      case "obstaclesRaised": pushEvent(`<em>${e.ids.length} pillars</em> rise`); break;
+      case "obstacleHit": pushEvent(`pillar ${e.id} hit by ${e.by} (${e.hpLeft} hp)`); break;
+      case "obstacleBroken": pushEvent(`<em>pillar ${e.id} shattered</em> by ${e.by}`); hitStopMs = Math.max(hitStopMs, 40); break;
+      case "arenaPulse": pushEvent(`arena pulse <em>${e.mutator}</em>`); break;
       case "bossDefeat": pushEvent("<em>boss defeated</em>"); break;
       case "playerDeath": pushEvent("player died"); break;
       case "taunt": break;
     }
   }
+  lab.mutator = battle.state.arena.mutator;
   if (battle.state.outcome !== "fighting" && lab.autoRetry) window.setTimeout(reset, 1200);
 }
 
@@ -393,7 +408,7 @@ const loop = (now: number) => {
     while (accumulator >= TICK_MS) {
       accumulator -= TICK_MS;
       events.push(...battle.step(input));
-      input.light = input.heavy = input.roll = false;
+      input.light = input.heavy = input.roll = input.jump = false;
     }
     afterStep(events);
   }

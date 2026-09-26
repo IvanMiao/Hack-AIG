@@ -22,6 +22,9 @@ const baseDraft = (): ForgeDraft => draftFromSpec(FALLBACK_SPECS[0]!);
 describe("fallback specs", () => {
   it("pass the fairness invariants", () => {
     for (const spec of FALLBACK_SPECS) expect(checkInvariants(spec)).toEqual([]);
+    const greedy = structuredClone(FALLBACK_SPECS[0]!);
+    greedy.stats.playerDamage = 4;
+    expect(checkInvariants(greedy)).toContainEqual(expect.stringContaining("playerDamage"));
   });
 });
 

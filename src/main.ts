@@ -172,6 +172,7 @@ function applyAsset(bundle: AssetBundle) {
       break;
     case "portrait":
       portrait.src = bundle.files.portrait ?? "";
+      stage.setPortrait(bundle.files.portrait ?? null);
       break;
     case "music":
       if (bundle.files.p1 && bundle.files.p2) {
@@ -268,6 +269,7 @@ function startBattle(next: NemesisSpec) {
   introHoldMs = reducedMotion.matches ? 0 : INTRO_CARD_MS;
   stage.applySpec(next);
   stage.setMode("fight");
+  document.body.classList.remove("flatline");
   document.documentElement.style.setProperty("--accent", next.art.accentHex);
   $("boss-name").textContent = next.identity.name;
   $("boss-title").textContent = next.identity.title;
@@ -449,6 +451,7 @@ function handleEvents(events: readonly BattleEvent[]) {
       case "phaseChange":
         hitStopMs = Math.max(hitStopMs, 220);
         syncPhasePips(event.phaseIndex);
+        document.body.classList.toggle("flatline", spec.phases[event.phaseIndex]?.rule === "flatline");
         say(spec.voice.lines.phase, 4000);
         audio.speak("phase");
         audio.playPhase(2);
@@ -540,6 +543,7 @@ function retreat() {
   window.clearTimeout(cueTimer);
   combatCue.classList.remove("show");
   audio.stopMusic();
+  document.body.classList.remove("flatline");
   portrait.classList.remove("shown");
   fightPanel.classList.add("hidden");
   fightPanel.classList.remove("intro-active");
@@ -656,7 +660,7 @@ const loop = (now: number) => {
       while (accumulator >= TICK_MS) {
         accumulator -= TICK_MS;
         events.push(...battle.step(inputNow));
-        inputNow.light = inputNow.heavy = inputNow.roll = false;
+        inputNow.light = inputNow.heavy = inputNow.roll = inputNow.jump = false;
       }
     }
     handleEvents(events);

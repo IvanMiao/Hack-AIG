@@ -403,20 +403,26 @@ export function createHazardView(scene: THREE.Scene) {
 
     const current = state.boss.current;
     if (current?.phase === "telegraph") {
-      const shape = previewShape(current, state.boss);
+      const shape = previewShape(current, state.boss, state.arena.radius);
       if (shape) {
         const u = current.t / current.telegraphMs;
         place(shape, u, 0, 0, 0.55 + 0.45 * u);
       }
     }
     for (const h of state.hazards) {
+      if (h.armT > 0) {
+        // Arena pulses telegraph like boss moves: a filling decal that only becomes a hazard once armed.
+        const u = 1 - h.armT / h.armMs;
+        place(h.shape, u, 0, 0, 0.5 + 0.5 * u);
+        continue;
+      }
       if (!seenHazards.has(h.id)) {
         seenHazards.add(h.id);
         if (h.source !== "ring") spawnCrack(h.shape);
       }
       if (h.repeat) {
         const pulse = 0.5 + 0.5 * Math.sin(state.timeMs / 140);
-        const settle = Math.min(1, (MOVE.zone.ttlMs - h.ttl) / 260);
+        const settle = Math.min(1, Math.max(0, MOVE.zone.ttlMs - h.ttl) / 260);
         place(h.shape, 0, 1 - settle, pulse, 0.9);
       } else {
         const life = Math.min(1, h.ttl / 220);
@@ -436,7 +442,8 @@ export function createHazardView(scene: THREE.Scene) {
       }
       projectilesUsed += 1;
       core.visible = halo.visible = true;
-      core.position.set(p.pos.x, 1.2, p.pos.z);
+      const height = state.flat ? p.y : 1.2;
+      core.position.set(p.pos.x, height, p.pos.z);
       if (terminal) {
         // A line of code in flight: a bright token stretched along its velocity with an additive trail behind it.
         const speed = Math.hypot(p.vel.x, p.vel.z) || 1;
@@ -448,7 +455,7 @@ export function createHazardView(scene: THREE.Scene) {
         halo.geometry = unit.token;
         halo.material = tokenTrail;
         halo.rotation.set(0, yaw, 0);
-        halo.position.set(p.pos.x - (p.vel.x / speed) * p.radius * 2.6, 1.2, p.pos.z - (p.vel.z / speed) * p.radius * 2.6);
+        halo.position.set(p.pos.x - (p.vel.x / speed) * p.radius * 2.6, height, p.pos.z - (p.vel.z / speed) * p.radius * 2.6);
         halo.scale.set(p.radius * 0.28, p.radius * 0.28, p.radius * 4.2);
       } else {
         core.geometry = unit.sphere;

@@ -1,9 +1,10 @@
 import type { NemesisSpec } from "../spec";
-import { createBattle, IDLE_INPUT } from "./battle";
+import { blockedByObstacle, createBattle, IDLE_INPUT } from "./battle";
+import { overlaps } from "./hazard";
 import { BOSS, PLAYER } from "./constants";
 import { createRng } from "./rng";
 import type { BattleEvent, BattleState, DeathLog, Outcome, PlayerInput } from "./types";
-import { dist, norm, perp, scale, sub, vec } from "./vec";
+import { add, dist, dot, norm, perp, scale, sub, vec } from "./vec";
 
 export interface BotProfile {
   /** ms after a telegraph starts before the bot may react */
@@ -15,6 +16,9 @@ export interface BotProfile {
   /** probability of heavy over light when punishing */
   heavyRate: number;
 }
+
+/** How early before impact the bot leaves the ground: the jump needs ~130 ms to clear a ground hazard. */
+const FLAT_JUMP_LEAD_MS = 320;
 
 /** A competent-but-mortal player: the difficulty gate is tuned against this profile. */
 export const AVERAGE_BOT: BotProfile = { reactionMs: 260, dodgeRate: 0.62, spacing: 2.2, heavyRate: 0.35 };
@@ -50,26 +54,71 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
     if (e.type === "phaseChange") circleSign *= -1;
   }
 
-  function decide(s: BattleState, _spec: NemesisSpec, prof: BotProfile): PlayerInput {
+  /** Keep a walk from grinding into cover: slide along the pillar's tangent, keeping the intended heading. */
+  function steer(s: BattleState, move: PlayerInput["move"]): PlayerInput["move"] {
+    const p = s.player.pos;
+    const cover = blockedByObstacle(p, add(p, move, 1.6), s.arena.obstacles, PLAYER.radius + 0.1);
+    if (!cover) return move;
+    const side = perp(norm(sub(cover.pos, p)));
+    return scale(side, dot(side, move) >= 0 ? 1 : -1);
+  }
+
+  function decide(s: BattleState, spec: NemesisSpec, prof: BotProfile): PlayerInput {
+    const input = decideRaw(s, spec, prof);
+    if (s.arena.obstacles.length > 0 && !input.roll) input.move = steer(s, input.move);
+    return input;
+  }
+
+  function decideRaw(s: BattleState, _spec: NemesisSpec, prof: BotProfile): PlayerInput {
     const p = s.player;
     const b = s.boss;
     const toBoss = norm(sub(b.pos, p.pos));
     const d = dist(p.pos, b.pos) - BOSS.radius;
     const current = b.current;
     const input: PlayerInput = { ...IDLE_INPUT, move: vec() };
+    // On the lane there is no sideways: strafing becomes backing off, rolling becomes jumping.
+    const side = s.flat ? scale(toBoss, -1) : scale(perp(toBoss), circleSign);
+
+    // Standing in (or under) an arena pulse: step off it first, weather beats everything else.
+    for (const h of s.hazards) {
+      if (h.source !== "arena" || h.shape.kind !== "circle" || !overlaps(h.shape, p.pos, PLAYER.radius + 0.7)) continue;
+      const away = sub(p.pos, h.shape.center);
+      // A pool opens under the player's feet, so on the lane there is no direction to normalise: back off along x.
+      input.move = s.flat ? vec(Math.sign(away.x) || Math.sign(side.x) || 1, 0) : norm(away, perp(toBoss));
+      return input;
+    }
+
+    // Volley telegraphed (or bolts still flying) and cover within reach: duck behind the pillar and hold
+    // there until the fan has passed, instead of gambling on a sidestep.
+    const volleyIncoming = (current?.phase === "telegraph" && current.move.type === "volley") || s.projectiles.length > 0;
+    if (volleyIncoming) {
+      let best: { pos: PlayerInput["move"]; d: number } | null = null;
+      for (const o of s.arena.obstacles) {
+        const spot = add(o.pos, norm(sub(o.pos, b.pos)), o.radius + PLAYER.radius + 0.35);
+        const far = dist(spot, p.pos);
+        if (far < 4 && (!best || far < best.d)) best = { pos: spot, d: far };
+      }
+      if (best) {
+        if (best.d > 0.25) input.move = norm(sub(best.pos, p.pos));
+        return input;
+      }
+    }
 
     if (telegraphAge !== null && current?.phase === "telegraph") {
       telegraphAge += 1000 / 60;
       const remaining = current.telegraphMs - current.t;
+      if (s.flat && willDodge && telegraphAge >= prof.reactionMs && remaining <= FLAT_JUMP_LEAD_MS && p.y <= 0) {
+        input.jump = true;
+        return input;
+      }
       // Roll just before the hit lands; ranged moves are dodged by sidestepping instead.
-      if (willDodge && telegraphAge >= prof.reactionMs && remaining <= PLAYER.roll.iframeMs * 0.8 && p.action === "idle") {
+      if (!s.flat && willDodge && telegraphAge >= prof.reactionMs && remaining <= PLAYER.roll.iframeMs * 0.8 && p.action === "idle") {
         input.roll = true;
-        const side = scale(perp(toBoss), circleSign);
         input.move = current.move.type === "thrust" || current.move.type === "charge" || current.move.type === "volley" ? side : current.move.type === "nova" ? scale(toBoss, -1) : side;
         return input;
       }
       if (current.move.type === "volley" || current.move.type === "zone" || current.move.type === "ring") {
-        input.move = scale(perp(toBoss), circleSign);
+        input.move = side;
         return input;
       }
     }
@@ -89,7 +138,7 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
     }
     if (d > prof.spacing + 0.6) input.move = toBoss;
     else if (d < prof.spacing - 0.6) input.move = scale(toBoss, -1);
-    else input.move = scale(perp(toBoss), circleSign);
+    else input.move = side;
     return input;
   }
 }

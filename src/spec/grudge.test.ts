@@ -189,8 +189,8 @@ describe("arena grudges", () => {
     expect(next.phases[0]!.rule).toBe("pillars");
     expect(next.phases[1]!.rule).toBe(spec.phases[1]!.rule);
     expect(checkInvariants(next)).toEqual([]);
-    expect(parseGrudgePatch(JSON.stringify({ observation: "o", patch: "p", ops: [{ op: "setRule", phaseIndex: 1, rule: "closing_ring" }] })).ok).toBe(true);
-    expect(parseGrudgePatch(JSON.stringify({ observation: "o", patch: "p", ops: [{ op: "setRule", phaseIndex: 1, rule: "lava" }] })).ok).toBe(false);
+    expect(parseGrudgePatch({ observation: "o", patch: "p", ops: [{ op: "setRule", phaseIndex: 1, rule: "closing_ring" }] }).ok).toBe(true);
+    expect(parseGrudgePatch({ observation: "o", patch: "p", ops: [{ op: "setRule", phaseIndex: 1, rule: "lava" }] }).ok).toBe(false);
   });
 
   it("sidestep habit adds closing_ring when the phase has no rule", () => {

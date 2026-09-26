@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { addOutline, createToonMaterial } from "./materials";
-import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
+import { instantiate, loadAssetLibrary, PLAYER_COLORS, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
 import { nextCameraYaw } from "./cameraFollow";
 import type { NemesisSpec } from "../spec";
@@ -345,7 +345,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 240);
   camera.position.set(14, 7, 14);
   camera.lookAt(0, 1, 0);
-  const accent = new THREE.Color("#7fdcff");
+  const accent = new THREE.Color("#ffd21e");
   const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
   const prepareSkyTexture = (texture: THREE.Texture) => {
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -511,23 +511,24 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const player = new THREE.Group();
   const playerVisualPivot = new THREE.Group();
   player.add(playerVisualPivot);
-  const fallbackCloak = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.9, 7), createToonMaterial(0x4a4c60, 0x141626));
-  fallbackCloak.name = "Fallback cloak";
+  const fallbackCloak = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 10), createToonMaterial(PLAYER_COLORS.cloth, PLAYER_COLORS.emissive));
+  fallbackCloak.name = "Fallback body";
   fallbackCloak.userData.materialRole = "cloth";
-  fallbackCloak.position.y = 0.95;
+  fallbackCloak.position.y = 1.3;
   addOutline(fallbackCloak);
-  const fallbackHood = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), createToonMaterial(0x2a2b3a, 0x141626));
-  fallbackHood.name = "Fallback hood";
+  const fallbackHood = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.7, 12), createToonMaterial(PLAYER_COLORS.cloth_dark, PLAYER_COLORS.emissive));
+  fallbackHood.name = "Fallback legs";
   fallbackHood.userData.materialRole = "cloth_dark";
-  fallbackHood.position.y = 1.95;
+  fallbackHood.position.y = 0.35;
   addOutline(fallbackHood);
-  const fallbackFace = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), createToonMaterial(0x030308));
-  fallbackFace.position.set(0, 1.94, 0.25);
+  const fallbackFace = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 6, 12, Math.PI), createToonMaterial(0x2b1a06));
+  fallbackFace.rotation.z = Math.PI;
+  fallbackFace.position.set(0, 1.2, 0.6);
   const fallbackEyes = new THREE.Mesh(
-    new THREE.SphereGeometry(0.035, 6, 4),
-    new THREE.MeshBasicMaterial({ color: 0xe9e4d8, toneMapped: false }),
+    new THREE.SphereGeometry(0.05, 6, 4),
+    new THREE.MeshBasicMaterial({ color: 0x2b1a06, toneMapped: false }),
   );
-  fallbackEyes.position.set(0, 1.96, 0.415);
+  fallbackEyes.position.set(0.2, 1.48, 0.58);
   const fallbackChain = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.025, 5, 8), createToonMaterial(0x5a5f6e));
   fallbackChain.position.set(0.56, 0.55, 0.12);
   playerVisualPivot.add(fallbackCloak, fallbackHood, fallbackFace, fallbackEyes, fallbackChain);
@@ -659,7 +660,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     if (!library) return;
     playerMixer?.stopAllAction();
     disposeGroup(playerVisualPivot);
-    const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
+    const visual = instantiate(library.player, ["#0b0b10", PLAYER_COLORS.accent, "#3b2508"], { player: true, outline: 0.016 });
     playerVisualPivot.add(visual);
     bladePivot = createBlade();
     playerVisualPivot.add(bladePivot);

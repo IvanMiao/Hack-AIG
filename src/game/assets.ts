@@ -25,6 +25,15 @@ export function materialRole(name: string): MaterialRole | null {
   return roles.has(candidate as MaterialRole) ? candidate as MaterialRole : null;
 }
 
+/** Hugging Face 🤗 hero: brand yellow body, orange darks, dark face features via `shade`, blush via `accent`/`glow`. */
+export const PLAYER_COLORS = {
+  cloth: "#ffd21e",
+  cloth_dark: "#ff9d00",
+  metal: "#8d93a6",
+  accent: "#ff7b6b",
+  emissive: "#2a1f05",
+} as const;
+
 export const BOSS_MODEL_URLS: Record<Silhouette, string> = {
   colossus: colossusUrl,
   hound: houndUrl,
@@ -84,7 +93,7 @@ export function instantiate(
   const clone = template.scene.clone(true);
   clone.userData.assetClone = true;
   const [, accentHex = "#e9e4d8", deepHex = "#25212d"] = palette;
-  const accent = new THREE.Color(options.player ? "#e9e4d8" : accentHex);
+  const accent = new THREE.Color(options.player ? PLAYER_COLORS.accent : accentHex);
   const deep = new THREE.Color(deepHex);
   const shade = deep.clone().multiplyScalar(0.36);
   const colors: Record<MaterialRole, THREE.Color> = {
@@ -94,12 +103,12 @@ export function instantiate(
     bone: new THREE.Color("#d9d2c3"),
     stone: new THREE.Color("#2a2c38"),
     stone_dark: new THREE.Color("#14161f"),
-    cloth: new THREE.Color(options.player ? "#4a4c60" : "#1c1c26"),
-    cloth_dark: new THREE.Color(options.player ? "#2a2b3a" : "#0b0b10"),
-    metal: new THREE.Color(options.player ? "#8d93a6" : "#5a5f6e"),
+    cloth: new THREE.Color(options.player ? PLAYER_COLORS.cloth : "#1c1c26"),
+    cloth_dark: new THREE.Color(options.player ? PLAYER_COLORS.cloth_dark : "#0b0b10"),
+    metal: new THREE.Color(options.player ? PLAYER_COLORS.metal : "#5a5f6e"),
     glow: accent.clone(),
   };
-  const playerEmissive = new THREE.Color("#141626");
+  const playerEmissive = new THREE.Color(PLAYER_COLORS.emissive);
   const shared = new Map<string, THREE.Material>();
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x030308, side: THREE.BackSide });
   clone.traverse((object) => {

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { getFallbackSpec, type NemesisSpec } from "../spec";
 import { createBattle, IDLE_INPUT } from "./battle";
+import { FALLBACK_SPECS } from "../spec/fallback";
 import { AVERAGE_BOT, calibrateDifficulty, DIFFICULTY_BAND, measureDifficulty, simulateBattle } from "./bot";
 import { overlaps } from "./hazard";
-import { PLAYER } from "./constants";
+import { ARENA_RADIUS, BOSS, BOSS_EDGE_MARGIN, PLAYER, PLAYER_EDGE_MARGIN } from "./constants";
+import { len } from "./vec";
 import type { PlayerInput } from "./types";
 
 const spec = getFallbackSpec();
@@ -89,5 +91,42 @@ describe("difficulty gate", () => {
     const result = calibrateDifficulty(brutal, 16, 10);
     expect(result.after).toBeLessThanOrEqual(DIFFICULTY_BAND.max);
     expect(result.steps.length).toBeGreaterThan(0);
+  });
+});
+
+describe("arena rim", () => {
+  const playerLimit = ARENA_RADIUS - PLAYER_EDGE_MARGIN;
+  const bossLimit = ARENA_RADIUS - BOSS.radius - BOSS_EDGE_MARGIN;
+  const forced = ["charge", "sweep", "blink", "thrust", "nova"] as const;
+
+  it("clamps the player to the playable disc", () => {
+    const b = createBattle(spec, 2);
+    b.debug.bossAi = false;
+    for (const move of [{ x: 1, z: 0 }, { x: -0.6, z: -0.8 }]) {
+      run(b, { ...IDLE_INPUT, move }, 12000);
+      expect(len(b.state.player.pos)).toBeCloseTo(playerLimit, 5);
+    }
+  });
+
+  it("keeps every boss inside its margin while chasing and striking a rim-hugging player", () => {
+    for (const boss of FALLBACK_SPECS) {
+      for (const angle of [0, 2.1, 4.4]) {
+        const b = createBattle(boss, 11);
+        b.debug.playerInvulnerable = true;
+        b.state.player.pos = { x: Math.sin(angle) * playerLimit, z: Math.cos(angle) * playerLimit };
+        let maxBoss = 0;
+        let hits = 0;
+        let nextForced = 0;
+        for (let t = 0; t < 40000; t += 1000 / 60) {
+          if (!b.state.boss.current && b.debug.forceMove(forced[nextForced % forced.length]!)) nextForced += 1;
+          for (const e of b.step(IDLE_INPUT)) if (e.type === "playerHit") hits += 1;
+          maxBoss = Math.max(maxBoss, len(b.state.boss.pos));
+          expect(len(b.state.player.pos)).toBeLessThanOrEqual(playerLimit + 1e-6);
+        }
+        expect(maxBoss, `${boss.code} @${angle}`).toBeLessThanOrEqual(bossLimit + 1e-6);
+        expect(maxBoss, `${boss.code} @${angle} never closed on the rim`).toBeGreaterThan(playerLimit - BOSS.meleeRange - 0.05);
+        expect(hits, `${boss.code} @${angle} landed no hit`).toBeGreaterThan(0);
+      }
+    }
   });
 });

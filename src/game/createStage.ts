@@ -9,7 +9,7 @@ import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
 import { isCodexBout, type NemesisSpec } from "../spec";
-import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
+import { ARENA_FLOOR_RADIUS, ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
 /** Everything the lab may retune live. Plain mutable objects so lil-gui can bind to them directly. */
@@ -143,7 +143,7 @@ interface BossPose {
 
 const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0, swing: 0, headTilt: 0 };
 const BOSS_COIL: BossPose = { lean: -0.3, lunge: -0.35, rise: 0.4, stretch: 1.06, squash: 1.1, glow: 1, swing: -2.3, headTilt: -0.5 };
-const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
+export const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
 const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0, swing: -1.45, headTilt: 0.3 };
 const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0, swing: 0.35, headTilt: 0.6 };
 
@@ -483,7 +483,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const emberSpeeds = new Float32Array(96);
   for (let i = 0; i < emberPositions.length; i += 3) {
     const angle = random() * Math.PI * 2;
-    const radius = 5 + random() * 18;
+    const radius = 5 + random() * (ARENA_RADIUS * 2 + 2);
     emberPositions[i] = Math.cos(angle) * radius;
     emberPositions[i + 1] = random() * 14 - 3;
     emberPositions[i + 2] = Math.sin(angle) * radius;
@@ -509,7 +509,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   fill.target.position.set(0, 1, 0);
   const heroLamp = new THREE.PointLight(0xfff1dc, tuning.lights.heroLamp, 7, 2);
   heroLamp.position.set(0.6, 3.2, -0.4);
-  // Warm pool over the arena centre: the floor reads brightest where the fight is and falls into fog at the rim.
+  // Warm pool that follows the fight: the floor reads brightest around the fighters and falls into fog beyond them.
   const pool = new THREE.SpotLight(0xffe2c0, tuning.lights.pool, 26, 0.62, 0.85, 1.6);
   pool.position.set(0, 13, 0);
   pool.target.position.set(0, 0, 0);
@@ -519,13 +519,13 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   arenaRoot.name = "Arena";
   scene.add(arenaRoot);
   const fallbackPlatform = new THREE.Mesh(
-    new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS * 0.85, 1.2, 14, 1),
+    new THREE.CylinderGeometry(ARENA_FLOOR_RADIUS, ARENA_FLOOR_RADIUS * 0.85, 1.2, 14, 1),
     createToonMaterial(0x14161f, 0x000000, { rim: 0 }),
   );
   fallbackPlatform.position.y = -0.6;
   addOutline(fallbackPlatform, 0.015);
   const fracture = new THREE.Mesh(
-    new THREE.TorusGeometry(ARENA_RADIUS, 0.06, 6, 48),
+    new THREE.TorusGeometry(ARENA_FLOOR_RADIUS, 0.06, 6, 48),
     new THREE.MeshBasicMaterial({
       color: accent,
       transparent: true,
@@ -559,7 +559,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       }
     `,
   });
-  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_RADIUS * 1.25, 64), edgeFadeMaterial);
+  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_FLOOR_RADIUS * 1.25, 64), edgeFadeMaterial);
   edgeFade.rotation.x = -Math.PI / 2;
   edgeFade.position.y = 0.035;
   edgeFade.renderOrder = 1;
@@ -661,6 +661,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const rollCentre = new THREE.Vector3();
   const cameraForward = new THREE.Vector3();
   const lookTarget = new THREE.Vector3();
+  const poolFocus = new THREE.Vector3();
   const burstAt = new THREE.Vector3();
   const burstDir = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
@@ -1118,6 +1119,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     heroLamp.intensity = tuning.lights.heroLamp * (heroMode ? 0.45 : 1);
     pool.intensity = tuning.lights.pool;
     pool.distance = tuning.lights.poolRadius * 2.9;
+    poolFocus.set((player.position.x + boss.position.x) / 2, 0, (player.position.z + boss.position.z) / 2);
+    pool.target.position.lerp(poolFocus, 1 - Math.exp(-step * 3));
+    pool.position.set(pool.target.position.x, 13, pool.target.position.z);
     RIM.strength.value = tuning.rim.strength;
     RIM.power.value = tuning.rim.power;
     if (scene.fog instanceof THREE.FogExp2) scene.fog.density = tuning.fog.density;

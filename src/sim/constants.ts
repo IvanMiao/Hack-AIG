@@ -1,6 +1,9 @@
 export const TICK_MS = 1000 / 60;
-export const ARENA_RADIUS = 9;
+export const ARENA_RADIUS = 27;
+/** Visible stone extends past the playable disc so boss bodies and strike lunges at the clamp stay over the floor. */
+export const ARENA_FLOOR_RADIUS = ARENA_RADIUS + 2;
 export const PLAYER_EDGE_MARGIN = 0.8;
+export const BOSS_EDGE_MARGIN = 1.6;
 
 export const PLAYER = {
   maxHp: 100,
@@ -16,7 +19,7 @@ export const PLAYER = {
 
 export const BOSS = {
   radius: 1.1,
-  walkSpeed: 2.6,
+  walkSpeed: 3.4,
   meleeRange: 3.2,
   staggerMs: 1400,
   phaseChangeInvulnMs: 1600,

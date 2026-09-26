@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "build:itch": "vite build && node scripts/build-itch.mjs",
+    "art:gen": "node scripts/gen-art.mjs",
+    "art:process": "${BLENDER:-blender} -b --factory-startup --python blender/process_art.py",
+    "assets:build": "${BLENDER:-blender} -b --factory-startup --python blender/build_assets.py -- --out src/assets/models",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p worker/tsconfig.json",
@@ -15,6 +18,8 @@
     "verify": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
+    "@fontsource/cinzel": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
     "ajv": "^8.17.1",
     "three": "^0.185.1"
   },

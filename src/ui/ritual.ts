@@ -36,6 +36,8 @@ export function createRitual(): Ritual {
   const panel = byId("ritual");
   const echo = byId("ritual-incantation");
   const status = byId("ritual-status");
+  const progress = panel.querySelector<HTMLElement>(".ritual-progress");
+  if (!progress) throw new Error("missing ritual progress bar");
   const fill = byId("ritual-progress-fill");
   const enter = byId<HTMLButtonElement>("enter-btn");
   const cards = new Map<CardName, HTMLElement>();
@@ -52,7 +54,9 @@ export function createRitual(): Ritual {
 
   const settle = () => {
     settled += 1;
-    fill.style.width = `${(settled / TOTAL_TASKS) * 100}%`;
+    const value = Math.round((settled / TOTAL_TASKS) * 100);
+    fill.style.width = `${value}%`;
+    progress.setAttribute("aria-valuenow", String(value));
     if (settled >= TOTAL_TASKS) window.setTimeout(() => { if (!entered && !enter.disabled) enter.click(); }, AUTO_ENTER_DELAY_MS);
   };
 
@@ -67,6 +71,7 @@ export function createRitual(): Ritual {
       settled = 0;
       entered = false;
       fill.style.width = "0%";
+      progress.setAttribute("aria-valuenow", "0");
       echo.textContent = `“${incantation}”`;
       status.textContent = "The void is listening…";
       enter.disabled = true;

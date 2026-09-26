@@ -17,4 +17,12 @@ describe("fight camera follow", () => {
     for (let i = 0; i < 120; i += 1) yaw = nextCameraYaw(yaw, 0, 4, 1 / 60);
     expect(Math.cos(yaw)).toBeGreaterThan(0.99);
   });
+
+  it("re-frames a distant boss faster than a melee-range one, but still not instantly", () => {
+    const initial = nextCameraYaw(null, 0, -4, 1 / 60);
+    const near = Math.abs(nextCameraYaw(initial, 4, 0, 1 / 60) - initial);
+    const far = Math.abs(nextCameraYaw(initial, 14, 0, 1 / 60) - initial);
+    expect(far).toBeGreaterThan(near);
+    expect(far).toBeLessThan(Math.PI / 2);
+  });
 });

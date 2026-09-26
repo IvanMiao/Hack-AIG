@@ -46,6 +46,10 @@ const vigorValue = $("vigor-value");
 const staminaValue = $("stamina-value");
 const subtitle = $("subtitle");
 const hitVignette = $("hit-vignette");
+const comboPips = Array.from($("combo-pips").children) as HTMLElement[];
+const comboPipsBox = $("combo-pips");
+const heavyCharge = $("heavy-charge");
+const combatCue = $("combat-cue");
 const portrait = $<HTMLImageElement>("portrait");
 const grudgeCard = $("grudge");
 const grudgeObservation = $("grudge-observation");
@@ -68,6 +72,7 @@ let hitStopMs = 0;
 let accumulator = 0;
 let subtitleTimer: number | undefined;
 let portraitTimer: number | undefined;
+let cueTimer: number | undefined;
 let introTimer: number | undefined;
 let introHoldMs = 0;
 let introFadeTimer: number | undefined;
@@ -79,6 +84,17 @@ const say = (line: string, holdMs = 3200) => {
   subtitle.classList.add("visible");
   window.clearTimeout(subtitleTimer);
   subtitleTimer = window.setTimeout(() => subtitle.classList.remove("visible"), holdMs);
+};
+
+/** Short combat callout under the hero: PERFECT / FINISHER / CHARGED / a hit taken. */
+const cue = (text: string, kind: "perfect" | "finisher" | "charged" | "hurt") => {
+  combatCue.textContent = text;
+  combatCue.dataset.kind = kind;
+  combatCue.classList.remove("show");
+  void combatCue.offsetWidth;
+  combatCue.classList.add("show");
+  window.clearTimeout(cueTimer);
+  cueTimer = window.setTimeout(() => combatCue.classList.remove("show"), 800);
 };
 
 const showPortrait = (ms: number | null) => {
@@ -407,15 +423,31 @@ function handleEvents(events: readonly BattleEvent[]) {
   if (!spec || !battle) return;
   for (const event of events) {
     switch (event.type) {
-      case "bossHit":
-        hitStopMs = Math.max(hitStopMs, event.heavy ? 90 : 40);
+      case "bossHit": {
+        const finisher = !event.heavy && event.combo === PLAYER.combo.length - 1;
+        hitStopMs = Math.max(hitStopMs, event.heavy ? 90 + event.charge * 50 : finisher ? 65 : 40);
+        if (event.heavy && event.charge >= 0.99) cue("CHARGED", "charged");
+        else if (finisher) cue("FINISHER", "finisher");
         break;
-      case "playerHit":
+      }
+      case "playerRoll":
+        if (event.perfect) {
+          hitStopMs = Math.max(hitStopMs, 70);
+          cue("PERFECT", "perfect");
+        }
+        break;
+      case "playerHit": {
         hitStopMs = Math.max(hitStopMs, 60);
+        // Light the edge the blow came from: the wash centre moves along the shove, in screen space.
+        const shove = stage.screenRelative(event.dir);
+        hitVignette.style.setProperty("--hit-x", `${50 + shove.x * 30}%`);
+        hitVignette.style.setProperty("--hit-y", `${50 - shove.z * 30}%`);
         hitVignette.classList.remove("flash");
         void hitVignette.offsetWidth;
         hitVignette.classList.add("flash");
+        cue(`-${event.damage}`, "hurt");
         break;
+      }
       case "phaseChange":
         hitStopMs = Math.max(hitStopMs, 220);
         syncPhasePips(event.phaseIndex);
@@ -487,6 +519,17 @@ function syncHud() {
   setProgress(playerStamina, player.stamina, PLAYER.maxStamina);
   vigorValue.textContent = `${Math.ceil(player.hp)} / ${PLAYER_MAX_HP}`;
   staminaValue.textContent = `${Math.ceil(player.stamina)} / ${PLAYER.maxStamina}`;
+  // Combo pips: how many hits of the chain have been thrown; the chain drops back to zero once the window lapses.
+  const chainLive = player.action === "light" || player.comboIdleT < PLAYER.comboResetMs;
+  const lit = chainLive ? player.comboIndex + 1 : 0;
+  comboPips.forEach((pip, i) => {
+    pip.classList.toggle("lit", i < lit);
+    pip.classList.toggle("finisher", lit === PLAYER.combo.length && i === PLAYER.combo.length - 1);
+  });
+  comboPipsBox.setAttribute("aria-label", lit > 0 ? `Light combo: hit ${lit} of ${PLAYER.combo.length}` : "Light combo: ready");
+  const charge = player.action === "heavy" ? player.charge : 0;
+  setProgress(heavyCharge, charge, 1);
+  heavyCharge.parentElement?.classList.toggle("full", charge >= 0.99);
 }
 
 function retreat() {
@@ -497,6 +540,8 @@ function retreat() {
   window.clearTimeout(introTimer);
   window.clearTimeout(introFadeTimer);
   window.clearTimeout(subtitleTimer);
+  window.clearTimeout(cueTimer);
+  combatCue.classList.remove("show");
   audio.stopMusic();
   document.body.classList.remove("flatline");
   portrait.classList.remove("shown");

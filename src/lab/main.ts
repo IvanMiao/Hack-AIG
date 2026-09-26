@@ -10,7 +10,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { createStage, DEFAULT_TUNING } from "../game/createStage";
 import { createCombatInput } from "../game/input";
 import { ELEMENT_PALETTES } from "../game/render/palette";
-import { BOSS, createBattle, MOVE, PLAYER, TICK_MS, type Battle, type BattleEvent } from "../sim";
+import { BOSS, createBattle, MOVE, PLAYER, rangeBand, TICK_MS, type Battle, type BattleEvent } from "../sim";
 import { ELEMENTS, FALLBACK_SPECS, MOVE_TYPES, PHASE_RULES, type Element, type MoveType, type NemesisSpec, type PhaseRule } from "../spec";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends object ? Mutable<T[K]> : T[K] };
@@ -115,25 +115,52 @@ playerFolder.add(player, "speed", 2, 12, 0.1);
 playerFolder.add(player, "radius", 0.2, 1, 0.01);
 playerFolder.add(player, "staminaRegenPerSec", 5, 80, 1);
 playerFolder.add(player, "staminaRegenDelayMs", 0, 1500, 10);
+playerFolder.add(player, "bufferMs", 0, 600, 10).name("input buffer ms");
+playerFolder.add(player, "comboResetMs", 100, 1500, 10).name("combo reset ms");
+const cancel = playerFolder.addFolder("cancel windows (fraction of action)").close();
+cancel.add(player.cancel, "lightIntoLight", 0, 1, 0.01);
+cancel.add(player.cancel, "lightIntoHeavy", 0, 1, 0.01);
+cancel.add(player.cancel, "lightIntoRoll", 0, 1, 0.01);
+cancel.add(player.cancel, "heavyIntoRoll", 0, 1, 0.01);
 const roll = playerFolder.addFolder("roll");
 roll.add(player.roll, "durationMs", 100, 900, 10);
 roll.add(player.roll, "iframeMs", 0, 900, 10);
 roll.add(player.roll, "distance", 1, 8, 0.1);
 roll.add(player.roll, "stamina", 0, 60, 1);
-for (const key of ["light", "heavy"] as const) {
-  const f = playerFolder.addFolder(key);
-  f.add(player[key], "windupMs", 0, 900, 10);
-  f.add(player[key], "activeMs", 20, 400, 10);
-  f.add(player[key], "recoverMs", 0, 900, 10);
-  f.add(player[key], "damage", 1, 120, 1);
-  f.add(player[key], "poise", 0, 80, 1);
-  f.add(player[key], "range", 1, 5, 0.1);
-  f.add(player[key], "stamina", 0, 60, 1);
+roll.add(player.roll, "cancelMs", 0, 900, 10).name("cancel into attack ms");
+roll.add(player.perfectRoll, "windowMs", 0, 400, 10).name("perfect window ms");
+roll.add(player.perfectRoll, "staminaRefund", 0, 60, 1).name("perfect refund");
+const charge = playerFolder.addFolder("heavy charge");
+charge.add(player.charge, "maxMs", 0, 2000, 10);
+charge.add(player.charge, "damageMul", 1, 3, 0.05);
+charge.add(player.charge, "poiseMul", 1, 3, 0.05);
+charge.add(player.charge, "lungeMul", 1, 3, 0.05);
+const hurt = playerFolder.addFolder("hurt");
+hurt.add(player.hurt, "invulnMs", 0, 1200, 10);
+hurt.add(player.hurt, "stunMs", 0, 600, 10);
+hurt.add(player.hurt, "knockback", 0, 4, 0.1);
+hurt.add(player.hurt, "knockbackMs", 0, 500, 10);
+const attackSpecs = { heavy: player.heavy, ...Object.fromEntries(player.combo.map((spec, i) => [`light ${i + 1}`, spec])) } as Record<string, Mutable<typeof PLAYER.heavy>>;
+for (const [key, spec] of Object.entries(attackSpecs)) {
+  const f = playerFolder.addFolder(key).close();
+  f.add(spec, "windupMs", 0, 900, 10);
+  f.add(spec, "activeMs", 20, 400, 10);
+  f.add(spec, "recoverMs", 0, 900, 10);
+  f.add(spec, "damage", 1, 120, 1);
+  f.add(spec, "poise", 0, 80, 1);
+  f.add(spec, "range", 1, 5, 0.1);
+  f.add(spec, "stamina", 0, 60, 1);
 }
 
 const bossFolder = gui.addFolder("Boss").close();
 bossFolder.add(bossC, "walkSpeed", 0, 8, 0.1);
-bossFolder.add(bossC, "meleeRange", 1, 7, 0.1);
+bossFolder.add(bossC, "meleeRange", 1, 7, 0.1).name("near band ≤");
+bossFolder.add(bossC, "midRange", 3, 20, 0.5).name("mid band ≤");
+bossFolder.add(bossC, "openingIdleMs", 0, 6000, 100).name("opening idle ms");
+const panic = bossFolder.addFolder("anti panic-roll").close();
+panic.add(bossC.panic, "windowMs", 500, 10000, 100);
+panic.add(bossC.panic, "rolls", 1, 8, 1);
+panic.add(bossC.panic, "telegraphScale", 0.5, 2.5, 0.05);
 bossFolder.add(bossC, "staggerMs", 200, 3000, 50);
 bossFolder.add(bossC, "weaknessWindowMs", 200, 4000, 50);
 bossFolder.add(bossC, "followUpTelegraphScale", 0.2, 1, 0.05);
@@ -211,6 +238,15 @@ cameraFolder.add(tuning.camera, "height", 1, 12, 0.1);
 cameraFolder.add(tuning.camera, "lag", 1, 30, 0.5);
 cameraFolder.add(tuning.camera, "shake", 0, 2, 0.05);
 cameraFolder.add(tuning.camera, "punch", 0, 2, 0.05);
+cameraFolder.add(tuning.camera, "farGap", 2, 20, 0.5).name("pull back past gap");
+cameraFolder.add(tuning.camera, "pullBack", 0, 1, 0.01).name("pull back per m");
+cameraFolder.add(tuning.camera, "maxPullBack", 0, 8, 0.1);
+cameraFolder.add(tuning.camera, "lookLag", 1, 30, 0.5);
+cameraFolder.add(tuning.camera, "hitKick", 0, 2, 0.05);
+const floorFolder = lookFolder.addFolder("floor").close();
+floorFolder.add(tuning.floor, "breakup", 0, 1, 0.01).name("value breakup");
+floorFolder.add(tuning.floor, "apron", 0, 1, 0.01).name("apron darken");
+floorFolder.add(tuning.floor, "ring", 0, 1, 0.01).name("edge ring");
 
 gui.add({ copy: () => void copyAsTs() }, "copy").name("Copy as TS (tuning + constants)");
 
@@ -247,8 +283,9 @@ function afterStep(events: BattleEvent[]) {
       case "telegraph": pushEvent(`telegraph <em>${e.move}</em> ${e.ms}ms`); break;
       case "moveActive": pushEvent(`active <em>${e.move}</em>`); break;
       case "playerHit": pushEvent(`player hit by ${e.move} −${e.damage} → ${e.hp}`); hitStopMs = Math.max(hitStopMs, 60); break;
-      case "playerRoll": pushEvent(e.dodged ? "<em>perfect roll</em>" : "roll"); break;
-      case "bossHit": pushEvent(`boss hit ${e.heavy ? "heavy" : "light"} −${e.damage}${e.weakness ? " (weak)" : ""}`); hitStopMs = Math.max(hitStopMs, e.heavy ? 90 : 40); break;
+      case "playerRoll": pushEvent(e.perfect ? "<em>perfect roll</em>" : e.dodged ? "roll (dodged)" : "roll"); break;
+      case "playerAttack": pushEvent(e.kind === "heavy" ? `heavy${e.charge > 0 ? ` charge ${Math.round(e.charge * 100)}%` : ""}` : `light ${e.combo + 1}`); break;
+      case "bossHit": pushEvent(`boss hit ${e.heavy ? `heavy${e.charge > 0 ? ` ×${(1 + (PLAYER.charge.damageMul - 1) * e.charge).toFixed(2)}` : ""}` : `light ${e.combo + 1}`} −${e.damage}${e.weakness ? " (weak)" : ""}`); hitStopMs = Math.max(hitStopMs, e.heavy ? 90 : 40); break;
       case "bossStagger": pushEvent("<em>boss staggered</em>"); hitStopMs = Math.max(hitStopMs, 220); break;
       case "weaknessOpen": pushEvent(`weakness open ${e.ms}ms`); break;
       case "phaseChange": pushEvent(`<em>phase ${e.phaseIndex + 1}</em>`); break;
@@ -325,9 +362,9 @@ function syncHud() {
   }
   status.textContent = [
     `t ${(s.timeMs / 1000).toFixed(2)}s  ×${lab.timeScale.toFixed(2)}  ${s.outcome}`,
-    `player ${p.action}${p.action !== "idle" ? ` ${Math.round(p.actionT)}ms` : ""}  hp ${p.hp}  st ${Math.round(p.stamina)}  pos ${p.pos.x.toFixed(1)},${p.pos.z.toFixed(1)}`,
+    `player ${p.action}${p.action !== "idle" ? ` ${Math.round(p.actionT)}ms` : ""}${p.action === "light" ? ` combo ${p.comboIndex + 1}` : ""}${p.action === "heavy" ? ` charge ${Math.round(p.charge * 100)}%` : ""}${p.buffered ? ` buf:${p.buffered.kind}` : ""}${p.hurtT > 0 ? ` inv ${Math.round(p.hurtT)}ms` : ""}  hp ${p.hp}  st ${Math.round(p.stamina)}  pos ${p.pos.x.toFixed(1)},${p.pos.z.toFixed(1)}`,
     `boss   phase ${b.phaseIndex + 1}/${specOverride.phases.length}  hp ${b.hp}  poise ${b.poiseDamage}/${specOverride.stats.poise}  weak ${Math.round(b.weaknessT)}ms  inv ${Math.round(b.invulnerableT)}ms`,
-    `hazards ${s.hazards.length}  projectiles ${s.projectiles.length}  dist ${Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z).toFixed(2)}`,
+    `hazards ${s.hazards.length}  projectiles ${s.projectiles.length}  dist ${Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z).toFixed(2)} (${rangeBand(Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z))})  rolls/${BOSS.panic.windowMs / 1000}s ${p.recentRolls.length}`,
     `palette ${specOverride.identity.element}  accent ${stage.palette().accent}  hot ${stage.palette().hot}`,
   ].join("\n");
   eventsEl.innerHTML = eventLog.map((line) => `<li>${line}</li>`).join("");

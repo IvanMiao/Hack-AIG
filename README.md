@@ -15,6 +15,15 @@ npm run dev          # Vite on :5173, proxies /api → Worker
 npm run verify       # typecheck + tests + build
 ```
 
+Bound (offline) nightmares ship with baked sky/portrait/music/voice under `public/fallback/<code>/`, indexed by `src/fallbackAssets.json`. After editing `src/spec/fallback.ts`, re-bake so the build needs no network for them:
+
+```bash
+GEMINI_API_KEY=… GRADIUM_API_KEY=… npm run bake:fallback              # every bound spec, skips kinds already baked
+GEMINI_API_KEY=… GRADIUM_API_KEY=… npm run bake:fallback -- VESSEL-01 voice --force   # one code / kinds, overwrite
+```
+
+Sharing: every summon has a code (`spec.code`). The outcome screen offers `SEND IT HUNTING` (Web Share or clipboard), links carry `?n=CODE`, and the incantation screen has a `HUNT IT` field. Kills and victories per code are counted in Worker KV (`/lineage/:code`); the shared spec is whatever generation it has learned up to (`GET /nemesis/:code`).
+
 ## Publish
 
 Every push to `main` runs [`.github/workflows/publish.yml`](.github/workflows/publish.yml):

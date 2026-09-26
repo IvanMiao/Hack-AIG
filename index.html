@@ -50,6 +50,13 @@
             </div>
           </form>
           <p id="incantation-status" class="status" role="status" aria-live="polite"></p>
+          <form id="hunt-form" class="hunt" novalidate aria-label="Face a shared nemesis">
+            <label for="hunt-code">Or face what hunted a friend</label>
+            <div class="hunt-row">
+              <input id="hunt-code" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="16" placeholder="CODE" />
+              <button id="hunt-btn" type="submit">HUNT IT</button>
+            </div>
+          </form>
         </section>
 
         <section id="ritual" class="panel ritual hidden" aria-label="Forging the nightmare" aria-live="polite" aria-busy="false">
@@ -111,6 +118,11 @@
             <h2 id="outcome-title"></h2>
             <p id="outcome-line"></p>
             <div id="grudge" class="hidden"><span class="grudge-label">GRUDGE</span><p id="grudge-observation"></p><p id="grudge-patch"></p></div>
+            <p id="lineage-line" class="lineage-line"></p>
+            <div class="share-row">
+              <span class="share-code" aria-label="Nemesis code"><code id="share-code"></code></span>
+              <button id="share-btn" type="button">SEND IT HUNTING</button>
+            </div>
             <div class="actions">
               <button id="retry-btn" class="primary" type="button">FIGHT AGAIN</button>
               <button id="new-btn" type="button">New incantation</button>

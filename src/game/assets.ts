@@ -113,7 +113,7 @@ export function instantiate(
           if (map) map.colorSpace = THREE.SRGBColorSpace;
           mapped = new THREE.MeshBasicMaterial({
             color: colors[role],
-            map,
+            ...(map ? { map } : {}),
             fog: role !== "glow",
             transparent: isFracture,
             opacity: isFracture ? 0.14 : 1,

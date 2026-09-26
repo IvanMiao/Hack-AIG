@@ -1,7 +1,7 @@
 import { checkInvariants, getFallbackSpec, type NemesisSpec } from "./spec";
 
 const DEPLOYED_FORGE_URL = "https://nemesis-forge.ymiao.workers.dev";
-const FORGE_URL = (import.meta.env.VITE_FORGE_URL as string | undefined) ?? (import.meta.env.PROD ? DEPLOYED_FORGE_URL : "/api");
+export const FORGE_URL = (import.meta.env.VITE_FORGE_URL as string | undefined) ?? (import.meta.env.PROD ? DEPLOYED_FORGE_URL : "/api");
 const FORGE_TIMEOUT_MS = 20_000;
 
 export interface ForgeResponse { spec: NemesisSpec; repairs: string[]; cached: boolean; source: "gemini" | "fallback" }

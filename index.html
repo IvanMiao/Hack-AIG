@@ -27,10 +27,9 @@
           <p class="eyebrow">A RITUAL FOR THE UNFORGIVEN</p>
           <h1 id="game-title" class="title">NEMESIS</h1>
           <p class="tagline">One sentence. One boss. It remembers.</p>
-
           <form id="incantation-form" novalidate>
             <label for="incantation-input">Speak your incantation</label>
-            <textarea id="incantation-input" rows="2" maxlength="280"
+            <textarea id="incantation-input" rows="2" maxlength="280" aria-invalid="false"
               aria-describedby="incantation-help incantation-error"
               placeholder="Describe what crawls out of the dark…"></textarea>
             <div class="field-meta">
@@ -49,19 +48,25 @@
             </div>
           </form>
           <p id="incantation-status" class="status" role="status" aria-live="polite"></p>
+        </section>
 
-          <section id="ritual" class="ritual hidden" aria-label="Forging the nightmare" aria-live="polite">
-            <p class="ritual-heading">THE VOID IS SHAPING AN ANSWER</p>
-            <div class="forge-cards">
-              <article class="forge-card" id="forge-form"><span>01 / FORM</span><strong>Silhouette</strong><p>Waiting for shape</p></article>
-              <article class="forge-card" id="forge-temper"><span>02 / TEMPER</span><strong>Element</strong><p>Waiting for heat</p></article>
-              <article class="forge-card" id="forge-voice"><span>03 / VOICE</span><strong>Voice</strong><p>Waiting for a name</p></article>
-              <article class="forge-card" id="forge-arena"><span>04 / ARENA</span><strong>Domain</strong><p>Waiting for ground</p></article>
-            </div>
-          </section>
+        <section id="ritual" class="panel ritual hidden" aria-label="Forging the nightmare" aria-live="polite" aria-busy="false">
+          <p id="ritual-incantation" class="ritual-incantation"></p>
+          <div class="cards" role="list" aria-label="Forging stages">
+            <article class="card" data-card="form" role="listitem"><header><h3>FORM</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="temper" role="listitem"><header><h3>TEMPER</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="voice" role="listitem"><header><h3>VOICE</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="arena" role="listitem"><header><h3>ARENA</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+          </div>
+          <div class="ritual-progress" role="progressbar" aria-label="Summoning progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="ritual-progress-fill"></div>
+          </div>
+          <p id="ritual-status" class="status" role="status" aria-live="polite"></p>
+          <button id="enter-btn" class="primary" type="button" disabled>ENTER THE RIFT</button>
         </section>
 
         <section id="fight" class="panel hidden" aria-label="Boss fight">
+          <img id="portrait" class="portrait" alt="" />
           <div id="player-bar">
             <div class="meter">
               <div class="meter-heading"><span>VIGOR</span><span id="vigor-value">100 / 100</span></div>
@@ -83,14 +88,29 @@
             <div id="phase-pips" class="phase-pips" aria-label="Boss phases"></div>
             <div class="bar boss-health" role="progressbar" aria-label="Nemesis vigor" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="boss-hp"></div></div>
           </div>
-          <p id="subtitle" class="subtitle"></p>
-          <p class="controls-hint"><span>MOVE</span> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <span>OR</span> <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></p>
+          <p id="subtitle" class="subtitle" aria-live="polite" aria-atomic="true"></p>
+          <p class="controls-hint">
+            <span>MOVE</span><kbd>WASD</kbd>
+            <span>LIGHT</span><kbd>J/LMB</kbd>
+            <span>HEAVY</span><kbd>K/RMB</kbd>
+            <span>ROLL</span><kbd>SPACE</kbd>
+            <span>RETREAT</span><kbd>ESC</kbd>
+          </p>
           <div id="letterbox-top" class="letterbox" aria-hidden="true"></div>
           <div id="letterbox-bottom" class="letterbox" aria-hidden="true"></div>
           <section id="boss-intro" class="boss-intro hidden" aria-live="polite">
             <p>THE VOID HAS REMEMBERED</p>
             <h2 id="intro-name"></h2>
             <span id="intro-title"></span>
+          </section>
+          <div id="hit-vignette" aria-hidden="true"></div>
+          <section id="outcome" class="hidden" aria-labelledby="outcome-title">
+            <h2 id="outcome-title"></h2>
+            <p id="outcome-line"></p>
+            <div class="actions">
+              <button id="retry-btn" class="primary" type="button">FIGHT AGAIN</button>
+              <button id="new-btn" type="button">New incantation</button>
+            </div>
           </section>
         </section>
       </main>

@@ -23,7 +23,13 @@ export function createToonMaterial(
   const { map, normalMap } = options;
   if (map) map.colorSpace = THREE.SRGBColorSpace;
   if (normalMap) normalMap.colorSpace = THREE.NoColorSpace;
-  return new THREE.MeshToonMaterial({ color, emissive, gradientMap: toonGradient, map, normalMap });
+  return new THREE.MeshToonMaterial({
+    color,
+    emissive,
+    gradientMap: toonGradient,
+    ...(map ? { map } : {}),
+    ...(normalMap ? { normalMap } : {}),
+  });
 }
 
 /** Inverted-hull outline: cheap, no post-processing pass, so it costs nothing at 60fps. */

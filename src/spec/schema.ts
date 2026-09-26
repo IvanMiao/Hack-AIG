@@ -14,7 +14,7 @@ const moveSchema: JSONSchemaType<Move> = {
     damage: { type: "number" },
     scale: { type: "number" },
     count: { type: "number" },
-    followUp: { type: "string", enum: [...MOVE_TYPES], nullable: true },
+    followUp: { type: "string", enum: [...MOVE_TYPES, null], nullable: true },
   },
   required: ["type", "telegraphMs", "damage", "scale", "count"],
   additionalProperties: false,

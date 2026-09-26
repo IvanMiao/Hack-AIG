@@ -37,6 +37,14 @@ describe("flatline phase (CODEX-01 phase 2)", () => {
     expect(report.bossWinRate).toBeLessThanOrEqual(DIFFICULTY_BAND.max);
   });
 
+  it("scales the player's hits by stats.playerDamage so phase 2 arrives sooner", () => {
+    expect(codex.stats.playerDamage).toBeGreaterThan(1);
+    const b = createBattle(codex, 1);
+    b.state.player.pos = { x: 0, z: -2 };
+    const hit = run(b, { ...IDLE_INPUT, light: true }, 600).find((e) => e.type === "bossHit");
+    expect(hit && hit.type === "bossHit" && hit.damage).toBe(Math.round(PLAYER.light.damage * codex.stats.playerDamage!));
+  });
+
   it("collapses both fighters onto the lane and ignores forward/back input", () => {
     const b = flatBattle();
     run(b, { ...IDLE_INPUT, move: { x: 0, z: 1 } }, 1500);

@@ -2,7 +2,7 @@ import Ajv, { type JSONSchemaType } from "ajv";
 import { checkInvariants } from "./invariants";
 import { LIMITS, clamp } from "./limits";
 import { clampMove } from "./normalize";
-import { MOVE_TYPES, type Move, type MoveType, type NemesisSpec } from "./types";
+import { MOVE_TYPES, PHASE_RULES, type Move, type MoveType, type NemesisSpec, type PhaseRule } from "./types";
 import type { DeathLog } from "../sim/types";
 
 /** Whitelisted ways a boss may evolve after a kill. Everything else Gemini writes is rejected. */
@@ -10,6 +10,7 @@ export type GrudgeOp =
   | { op: "addMove"; phaseIndex: number; move: Move }
   | { op: "tuneMove"; phaseIndex: number; moveIndex: number; telegraphMs?: number; damage?: number; scale?: number; count?: number }
   | { op: "tuneStats"; aggression?: number; poise?: number }
+  | { op: "setRule"; phaseIndex: number; rule: PhaseRule }
   | { op: "addTaunt"; line: string };
 
 export interface GrudgePatch { observation: string; patch: string; ops: GrudgeOp[] }
@@ -68,6 +69,12 @@ export const grudgePatchSchema = {
           },
           {
             type: "object",
+            properties: { op: { type: "string", enum: ["setRule"] }, phaseIndex: { type: "number" }, rule: { type: "string", enum: [...PHASE_RULES] } },
+            required: ["op", "phaseIndex", "rule"],
+            additionalProperties: false,
+          },
+          {
+            type: "object",
             properties: { op: { type: "string", enum: ["addTaunt"] }, line: { type: "string" } },
             required: ["op", "line"],
             additionalProperties: false,
@@ -104,6 +111,7 @@ export function applyGrudge(spec: NemesisSpec, patch: GrudgePatch): NemesisSpec 
   let addMoves = 0;
   let tunes = 0;
   let taunts = 0;
+  let rules = 0;
 
   for (const op of patch.ops) {
     switch (op.op) {
@@ -127,6 +135,15 @@ export function applyGrudge(spec: NemesisSpec, patch: GrudgePatch): NemesisSpec 
         if (num(op.scale)) move.scale = clamp(op.scale, LIMITS.scale.min, LIMITS.scale.max);
         if (num(op.count)) move.count = Math.round(clamp(op.count, LIMITS.count.min, LIMITS.count.max));
         tunes += 1;
+        break;
+      }
+      case "setRule": {
+        if (rules >= 1 || !PHASE_RULES.includes(op.rule) || op.rule === "flatline") break;
+        const phase = next.phases[Math.round(clamp(op.phaseIndex, 0, next.phases.length - 1))];
+        // flatline is hand-authored for bound nightmares; a grudge may neither grant nor revoke it.
+        if (!phase || phase.rule === "flatline") break;
+        phase.rule = op.rule;
+        rules += 1;
         break;
       }
       case "tuneStats": {
@@ -215,8 +232,9 @@ export function ruleGrudge(spec: NemesisSpec, log: DeathLog): GrudgePatch {
   const phaseIndex = Math.min(Math.max(0, log.phaseReached), spec.phases.length - 1);
   const phase = spec.phases[phaseIndex] ?? spec.phases[0];
   const moves = phase?.moves ?? [];
+  const arenaKill = log.killedBy === "arena";
   const killedByIndex = Math.max(0, moves.findIndex((m) => m.type === log.killedBy));
-  const killedBy = moves[killedByIndex];
+  const killedBy = arenaKill ? undefined : moves[killedByIndex];
 
   const totalRolls = ROLL_DIRECTIONS.reduce((sum, d) => sum + log.rolls[d], 0);
   const dominant = ROLL_DIRECTIONS.reduce((a, b) => (log.rolls[b] > log.rolls[a] ? b : a));
@@ -238,6 +256,7 @@ export function ruleGrudge(spec: NemesisSpec, log: DeathLog): GrudgePatch {
     } else {
       ops.push({ op: "addMove", phaseIndex, move });
     }
+    if ((dominant === "left" || dominant === "right") && phase && phase.rule === "none") ops.push({ op: "setRule", phaseIndex, rule: "closing_ring" });
     observation = `You rolled ${dominant} ${dominantPct}% of the time.`;
     patch = RULE1_PATCH[dominant];
     ops.push({ op: "addTaunt", line: `${capitalize(dominant)} again? I know the way you flinch.` });
@@ -247,6 +266,12 @@ export function ruleGrudge(spec: NemesisSpec, log: DeathLog): GrudgePatch {
     observation = `You swing into ${telegraphPct}% of its wind-ups.`;
     patch = `Its ${moveType} comes faster.`;
     ops.push({ op: "addTaunt", line: "Swing into my wind-up again. I dare you." });
+  } else if (arenaKill) {
+    const seconds = Math.round(log.durationMs / 1000);
+    ops.push({ op: "tuneStats", aggression: spec.stats.aggression + 0.1 });
+    observation = `The arena finished you after ${seconds}s.`;
+    patch = "It grows bolder.";
+    ops.push({ op: "addTaunt", line: "My ground remembers where you fell." });
   } else {
     const moveType = log.killedBy ?? killedBy?.type ?? "its blows";
     const seconds = Math.round(log.durationMs / 1000);

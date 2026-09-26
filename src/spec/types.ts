@@ -46,6 +46,8 @@ export interface Stats {
   maxHp: number;
   poise: number;
   aggression: number;
+  /** Multiplier on the player's hits against this nightmare. Hand-authored for bound nightmares; 1 when absent. */
+  playerDamage?: number;
 }
 
 export interface Weakness {

@@ -5,3 +5,4 @@ export * from "./rng";
 export * from "./hazard";
 export * from "./battle";
 export * from "./bot";
+export * from "./arena";

@@ -1,5 +1,5 @@
 import { LIMITS } from "./limits";
-import type { NemesisSpec } from "./types";
+import { PHASE_RULES, type NemesisSpec } from "./types";
 
 /**
  * Fairness rules a spec must satisfy before it is allowed into the arena.
@@ -9,6 +9,8 @@ export function checkInvariants(spec: NemesisSpec): string[] {
   const problems: string[] = [];
   const { maxHp } = spec.stats;
   if (maxHp < LIMITS.maxHp.min || maxHp > LIMITS.maxHp.max) problems.push(`maxHp out of range: ${maxHp}`);
+  const { playerDamage } = spec.stats;
+  if (playerDamage !== undefined && (playerDamage < LIMITS.playerDamage.min || playerDamage > LIMITS.playerDamage.max)) problems.push(`playerDamage out of range: ${playerDamage}`);
   if (spec.phases.length < LIMITS.phases.min || spec.phases.length > LIMITS.phases.max) problems.push(`phase count ${spec.phases.length}`);
   if (spec.phases[0]?.hpThreshold !== 1) problems.push("phase 1 must start at hpThreshold 1");
 
@@ -19,6 +21,7 @@ export function checkInvariants(spec: NemesisSpec): string[] {
       const previous = spec.phases[index - 1]?.hpThreshold ?? 1;
       if (phase.hpThreshold >= previous) problems.push(`${label} threshold ${phase.hpThreshold} not below previous ${previous}`);
     }
+    if (!PHASE_RULES.includes(phase.rule)) problems.push(`${label} has unknown arena rule ${String(phase.rule)}`);
     const distinct = new Set(phase.moves.map((m) => m.type));
     if (distinct.size < 2) problems.push(`${label} needs at least 2 distinct move types`);
     phase.moves.forEach((move, moveIndex) => {

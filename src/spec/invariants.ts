@@ -1,5 +1,5 @@
 import { LIMITS } from "./limits";
-import type { NemesisSpec } from "./types";
+import { PHASE_RULES, type NemesisSpec } from "./types";
 
 /**
  * Fairness rules a spec must satisfy before it is allowed into the arena.
@@ -19,6 +19,7 @@ export function checkInvariants(spec: NemesisSpec): string[] {
       const previous = spec.phases[index - 1]?.hpThreshold ?? 1;
       if (phase.hpThreshold >= previous) problems.push(`${label} threshold ${phase.hpThreshold} not below previous ${previous}`);
     }
+    if (!PHASE_RULES.includes(phase.rule)) problems.push(`${label} has unknown arena rule ${String(phase.rule)}`);
     const distinct = new Set(phase.moves.map((m) => m.type));
     if (distinct.size < 2) problems.push(`${label} needs at least 2 distinct move types`);
     phase.moves.forEach((move, moveIndex) => {

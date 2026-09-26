@@ -13,6 +13,10 @@ from mathutils import Vector
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEXTURES = os.path.join(HERE, "art", "textures")
 TILE_METRES = 1.5
+# Visible stone radius; must match ARENA_FLOOR_RADIUS in src/sim/constants.ts (playable disc + boss apron).
+ARENA_RADIUS = 29.0
+# Arena geometry was authored for a 9 m platform; horizontal extents are scaled by this factor.
+ARENA_SCALE = ARENA_RADIUS / 9.0
 FRAME_END = 97
 # Every character exports the same named clips. `idle`/`move` loop and are cross-faded by ground speed; the
 # rest are one-shots the runtime scrubs from sim state (attack phases, hit flash, death timer) or loops (stagger).
@@ -797,12 +801,13 @@ def bob(root, frames, amplitude, cycles=1, shape="sin", samples=8):
 def platform_mesh(parent):
     rng = random.Random(7251)
     segments = 64
-    radii = (1.5, 3.0, 4.5, 6.0, 7.5, 9.0)
+    ring_count = max(6, round(ARENA_RADIUS / 1.5))
+    radii = tuple(ARENA_RADIUS * (ring + 1) / ring_count for ring in range(ring_count))
     vertices = [(0, 0, 0)]
     for ring, radius in enumerate(radii):
         for i in range(segments):
             angle = math.tau * i / segments
-            jitter = 1 + rng.uniform(-0.018, 0.018) * (1.0 + ring / 5)
+            jitter = 1 + rng.uniform(-0.018, 0.018) * (1.0 + ring / (ring_count - 1)) / ARENA_SCALE
             vertices.append((math.cos(angle) * radius * jitter,
                              math.sin(angle) * radius * jitter, 0))
     faces = [(0, i + 1, (i + 1) % segments + 1) for i in range(segments)]
@@ -821,8 +826,8 @@ def platform_mesh(parent):
         for i in range(segments):
             angle = math.tau * i / segments
             jitter = 1 + rng.uniform(-0.055, 0.055)
-            vertices.append((math.cos(angle) * radius * jitter,
-                             math.sin(angle) * radius * jitter, z))
+            vertices.append((math.cos(angle) * radius * ARENA_SCALE * jitter,
+                             math.sin(angle) * radius * ARENA_SCALE * jitter, z))
     for layer in range(len(levels) - 1):
         top, bottom = layer * segments, (layer + 1) * segments
         for i in range(segments):
@@ -831,7 +836,7 @@ def platform_mesh(parent):
                           (top + i, bottom + j, bottom + i)))
     faces.append(tuple(range((len(levels) - 1) * segments, len(levels) * segments)))
     underside = mesh_object("Fractured rock under-platform", vertices, faces, "stone_dark", parent)
-    fracture(underside, voxel_size=0.28, strength=0.16, decimate=0.18)
+    fracture(underside, voxel_size=0.28 * ARENA_SCALE, strength=0.16, decimate=0.18)
     finish(underside, "stone_dark", parent)
 
 
@@ -864,22 +869,25 @@ def pillar_mesh(parent, name, pos, height, seed):
 def build_arena():
     root = clean_scene("arena", "arena", frames=1)
     platform_mesh(root)
-    disk(root, "sigil", "glow", 3.2, 0.012, 128, "sigil", "fit")
+    disk(root, "sigil", "glow", 3.2 * math.sqrt(ARENA_SCALE), 0.012, 128, "sigil", "fit")
     rng = random.Random(9143)
-    for i in range(8):
-        angle = math.tau * i / 8 + 0.11
-        start_r = rng.uniform(7.65, 8.05)
-        end_r = rng.uniform(8.5, 8.85)
+    # Detail counts grow gently with the platform: the GLB has a 2.5 MB / 60k-triangle budget.
+    count = lambda base, growth=1.3: max(base, round(base * growth))
+    rim_count = count(8, 1.5)
+    for i in range(rim_count):
+        angle = math.tau * i / rim_count + 0.11
+        start_r = rng.uniform(7.65, 8.05) * ARENA_SCALE
+        end_r = rng.uniform(8.5, 8.85) * ARENA_SCALE
         tapered_curve(root, "Rim fracture", "glow",
                       ((math.cos(angle) * start_r, math.sin(angle) * start_r, 0.015),
                        (math.cos(angle + 0.013) * (start_r + end_r) * 0.5,
                         math.sin(angle + 0.013) * (start_r + end_r) * 0.5, 0.016),
                        (math.cos(angle + 0.025) * end_r, math.sin(angle + 0.025) * end_r, 0.015)),
-                      (0.8, 1.0, 0.12), 0.008, 8)
-    for i in range(18):
+                      (0.8, 1.0, 0.12), 0.008, 6)
+    for i in range(count(18)):
         angle = rng.uniform(0, math.tau)
-        inner = rng.uniform(4.1, 6.9)
-        outer = rng.uniform(7.1, 8.8)
+        inner = rng.uniform(4.1, 6.9) * ARENA_SCALE
+        outer = rng.uniform(7.1, 8.8) * ARENA_SCALE
         middle = (inner + outer) * 0.5
         side = rng.uniform(-0.12, 0.12)
         points = (
@@ -888,18 +896,19 @@ def build_arena():
             (math.cos(angle - side * 0.4) * outer, math.sin(angle - side * 0.4) * outer, 0.016),
         )
         tapered_curve(root, "Hairline floor fracture", "stone_dark",
-                      points, (0.35, 1.0, 0.25), 0.024, 8)
-    for i in range(10):
+                      points, (0.35, 1.0, 0.25), 0.024, 5)
+    for i in range(count(10)):
         angle = rng.uniform(0, math.tau)
-        radius = rng.uniform(6.0, 8.4)
+        radius = rng.uniform(2.5, 8.4) * ARENA_SCALE
         size = rng.uniform(0.26, 0.56)
         rock_chunk(root, "Raised fractured floor slab", "stone",
                    (math.cos(angle) * radius, math.sin(angle) * radius, 0.02),
                    (size * 1.35, size, 0.08), 1700 + i, voxel=0.075, decimate=0.16)
     pillars = []
-    for i in range(7):
-        angle = math.tau * i / 7 + 0.2
-        radius = rng.uniform(10.8, 11.8)
+    pillar_count = count(7, 1.15)
+    for i in range(pillar_count):
+        angle = math.tau * i / pillar_count + 0.2
+        radius = rng.uniform(10.8, 11.8) * ARENA_SCALE
         height = rng.uniform(3.7, 5.7)
         pos = (math.cos(angle) * radius, math.sin(angle) * radius, -0.2)
         pillars.append((pos, height))
@@ -915,8 +924,8 @@ def build_arena():
             blade(root, "Gothic arch footing", "stone",
                   (pos[0], pos[1], height * 0.47),
                   (pos[0], pos[1], height * 0.64), 0.42, 0.16, 8)
-    for i in range(0, 7, 2):
-        (first, first_height), (second, second_height) = pillars[i], pillars[(i + 1) % 7]
+    for i in range(0, pillar_count, 2):
+        (first, first_height), (second, second_height) = pillars[i], pillars[(i + 1) % pillar_count]
         crown_z = min(first_height, second_height) * 0.88
         midpoint = ((first[0] + second[0]) * 0.5, (first[1] + second[1]) * 0.5)
         tapered_curve(root, "Broken pointed arch", "stone_dark",
@@ -929,9 +938,9 @@ def build_arena():
                        (midpoint[0], midpoint[1], crown_z),
                        (midpoint[0] + 0.12, midpoint[1], crown_z - 0.55)),
                       (0.65, 1.0, 0.65), 0.12, 8)
-    for i in range(20):
+    for i in range(count(20, 1.1)):
         angle = rng.uniform(0, math.tau)
-        radius = rng.uniform(12, 25)
+        radius = rng.uniform(12, 25) * ARENA_SCALE
         pos = (math.cos(angle) * radius, math.sin(angle) * radius, rng.uniform(-8, 6))
         size = rng.uniform(0.28, 0.82)
         rock_chunk(root, f"Floating debris {i + 1}", "stone_dark" if i % 3 else "stone",

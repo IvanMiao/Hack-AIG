@@ -4,6 +4,7 @@ import { applyGrudge, describeDeath, parseGrudgePatch, ruleGrudge, type GrudgePa
 import { checkInvariants } from "./invariants";
 import { LIMITS } from "./limits";
 import type { DeathLog } from "../sim/types";
+import { simulateBattle } from "../sim/bot";
 
 const log = (over: Partial<DeathLog>): DeathLog => ({
   durationMs: 48000,
@@ -163,5 +164,53 @@ describe("describeDeath", () => {
     expect(text).toContain("left 79%");
     expect(text).toContain("killed by charge");
     expect(text).toContain("Attacked 22 times (heavy 6)");
+  });
+});
+
+describe("arena grudges", () => {
+  const spec = getFallbackSpec();
+  const baseLog = (): DeathLog => ({
+    ...simulateBattle(spec, 3).log,
+    rolls: { left: 0, right: 0, away: 0, toward: 0 },
+    lightAttacks: 0,
+    heavyAttacks: 0,
+    attacksDuringTelegraph: 0,
+  });
+
+  it("setRule is whitelisted, capped at one, and survives the invariants", () => {
+    const next = applyGrudge(spec, {
+      observation: "o",
+      patch: "p",
+      ops: [
+        { op: "setRule", phaseIndex: 0, rule: "pillars" },
+        { op: "setRule", phaseIndex: 1, rule: "closing_ring" },
+      ],
+    });
+    expect(next.phases[0]!.rule).toBe("pillars");
+    expect(next.phases[1]!.rule).toBe(spec.phases[1]!.rule);
+    expect(checkInvariants(next)).toEqual([]);
+    expect(parseGrudgePatch({ observation: "o", patch: "p", ops: [{ op: "setRule", phaseIndex: 1, rule: "closing_ring" }] }).ok).toBe(true);
+    expect(parseGrudgePatch({ observation: "o", patch: "p", ops: [{ op: "setRule", phaseIndex: 1, rule: "lava" }] }).ok).toBe(false);
+  });
+
+  it("sidestep habit adds closing_ring when the phase has no rule", () => {
+    const log = baseLog();
+    log.rolls = { left: 8, right: 1, away: 0, toward: 1 };
+    log.phaseReached = 0;
+    const s = structuredClone(spec);
+    s.phases[0]!.rule = "none";
+    const patch = ruleGrudge(s, log);
+    expect(patch.ops).toContainEqual({ op: "setRule", phaseIndex: 0, rule: "closing_ring" });
+    expect(applyGrudge(s, patch).phases[0]!.rule).toBe("closing_ring");
+  });
+
+  it("an arena kill grows the boss bolder instead of tuning a move", () => {
+    const log = baseLog();
+    log.killedBy = "arena";
+    const patch = ruleGrudge(spec, log);
+    expect(patch.observation).toMatch(/arena/i);
+    expect(patch.ops.some((op) => op.op === "tuneMove")).toBe(false);
+    expect(patch.ops.some((op) => op.op === "tuneStats")).toBe(true);
+    expect(checkInvariants(applyGrudge(spec, patch))).toEqual([]);
   });
 });

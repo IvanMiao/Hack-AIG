@@ -10,6 +10,11 @@ const KIND_DISC = 0;
 const KIND_QUAD = 1;
 const KIND_RING = 2;
 
+// Decal styles: the void's soft glowing sigils, or CODEX's terminal readout.
+const STYLE_VOID = 0;
+const STYLE_TERMINAL = 1;
+export type HazardStyle = "void" | "terminal";
+
 const DECAL_VERTEX = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -33,7 +38,52 @@ const DECAL_FRAGMENT = /* glsl */ `
   uniform float uHalfAngle;
   uniform vec2 uSize;
   uniform float uEdge;
+  uniform int uStyle;
+  uniform float uTime;
   varying vec2 vUv;
+
+  /*
+   * Terminal readout: bracketed corners with dashed edges, the interior a faint cell grid with scanlines,
+   * and the commit progress compiled cell by cell (the cell being written blinks like a cursor).
+   */
+  vec4 terminal(vec2 p, float edgeDist, float sweep) {
+    float dashCoord;
+    vec2 gridUv;
+    bool solid;
+    if (uKind == ${KIND_QUAD}) {
+      dashCoord = vUv.x * uSize.x + vUv.y * uSize.y;
+      gridUv = vUv * uSize;
+      vec2 d = min(vUv, 1.0 - vUv) * uSize;
+      solid = d.x < 0.7 && d.y < 0.7;
+    } else {
+      float a = atan(p.y, p.x);
+      dashCoord = a * uSize.x;
+      gridUv = p * uSize.x * 2.0;
+      solid = abs(fract(a / 6.2832 * 4.0 + 0.5) - 0.5) < 0.035;
+    }
+    float dash = step(0.35, fract(dashCoord * 2.0));
+    float outline = (1.0 - smoothstep(uEdge * 0.5, uEdge * 0.85, edgeDist)) * (solid ? 1.0 : dash);
+    float grid = step(0.1, fract(gridUv.x * 1.6)) * step(0.1, fract(gridUv.y * 1.6));
+    float scan = 0.6 + 0.4 * step(0.5, fract(gridUv.y * 5.0 - uTime * 3.0));
+    float cells = 10.0;
+    float cellIdx = floor(sweep * cells);
+    float frontIdx = floor(uProgress * cells);
+    float fill = 0.0;
+    float writing = 0.0;
+    if (uProgress > 0.0 && uKind != ${KIND_RING}) {
+      if (cellIdx < frontIdx) fill = 0.22 * grid * scan;
+      else if (cellIdx == frontIdx) {
+        writing = step(0.5, fract(uTime * 5.0));
+        fill = 0.55 * grid * writing;
+      }
+    }
+    float ambient = grid * (0.04 + uPulse * 0.16) * scan;
+    float flicker = 0.9 + 0.1 * step(0.6, fract(sin(floor(uTime * 20.0) * 12.9898) * 43758.5453));
+    float alpha = clamp(outline + fill + ambient, 0.0, 1.0) * flicker;
+    alpha = max(alpha, uFlash * (0.25 + 0.7 * grid));
+    vec3 color = mix(uColor, vec3(1.0), clamp(uFlash * 0.8 + writing * 0.4 + outline * 0.25, 0.0, 1.0));
+    return vec4(color, alpha * uOpacity);
+  }
 
   void main() {
     vec2 p = vUv - 0.5;
@@ -58,19 +108,51 @@ const DECAL_FRAGMENT = /* glsl */ `
       bandWidth = uEdge / outer;
     }
     if (edgeDist < 0.0) discard;
+    if (uStyle == ${STYLE_TERMINAL}) {
+      gl_FragColor = terminal(p, edgeDist, sweep);
+      return;
+    }
 
-    float outline = 1.0 - smoothstep(uEdge * 0.55, uEdge, edgeDist);
-    float rimGlow = (1.0 - smoothstep(0.0, uEdge * 5.0, edgeDist)) * 0.28;
+    /*
+     * Sigil: a double-lined rim notched with rune ticks, an inner weave of spokes or hatching, a smooth
+     * commit band that sheds embers over the sealed area, and a textured burst instead of a flat flash.
+     */
+    float tickCoord;
+    vec2 weaveUv;
+    float weave;
+    if (uKind == ${KIND_QUAD}) {
+      tickCoord = vUv.x * uSize.x + vUv.y * uSize.y;
+      weaveUv = vUv * uSize;
+      weave = step(0.9, fract((weaveUv.x + weaveUv.y) * 1.1)) + step(0.9, fract((weaveUv.x - weaveUv.y) * 1.1));
+    } else {
+      float a = atan(p.y, p.x);
+      float r = length(p) * 2.0;
+      tickCoord = a * uSize.x;
+      weaveUv = p * uSize.x * 2.0;
+      weave = step(0.94, fract(a / 6.2832 * 20.0)) * smoothstep(0.08, 0.3, r) + step(0.92, fract(r * uSize.x * 0.9));
+    }
+    weave = clamp(weave, 0.0, 1.0);
+    float outline = 1.0 - smoothstep(uEdge * 0.45, uEdge * 0.8, edgeDist);
+    float inner = 1.0 - smoothstep(uEdge * 0.22, uEdge * 0.42, abs(edgeDist - uEdge * 1.9));
+    float tick = step(0.84, fract(tickCoord)) * (1.0 - smoothstep(uEdge * 1.6, uEdge * 3.4, edgeDist));
+    float rimGlow = (1.0 - smoothstep(0.0, uEdge * 5.0, edgeDist)) * 0.22;
     float band = 0.0;
     float fill = 0.0;
+    float ember = 0.0;
     if (uProgress > 0.0 && uKind != ${KIND_RING}) {
       float front = uProgress;
-      band = 1.0 - smoothstep(0.0, bandWidth * 1.4, abs(sweep - front));
-      fill = (1.0 - step(front, sweep)) * (0.08 + uProgress * 0.12);
+      band = 1.0 - smoothstep(0.0, bandWidth * 1.6, abs(sweep - front));
+      float sealed = 1.0 - step(front, sweep);
+      fill = sealed * (0.06 + uProgress * 0.1 + weave * 0.2);
+      vec2 cell = floor(weaveUv * 2.5);
+      float h = fract(sin(dot(cell, vec2(12.9898, 78.233)) + floor(uTime * 6.0) * 0.37) * 43758.5453);
+      ember = sealed * step(0.8, h) * (0.5 + 0.5 * sin(uTime * 14.0 + h * 40.0));
     }
-    float alpha = clamp(outline + rimGlow + band * 0.9 + fill + uPulse * 0.12, 0.0, 1.0);
-    alpha = mix(alpha, 1.0, uFlash * 0.75);
-    vec3 color = mix(uColor, vec3(1.0), clamp(uFlash + band * 0.45 + outline * 0.2, 0.0, 1.0));
+    float pulse = uPulse * (0.08 + weave * 0.18);
+    float alpha = clamp(outline + inner * 0.55 + tick * 0.6 + rimGlow + band * 0.9 + fill + ember * 0.6 + pulse, 0.0, 1.0);
+    float burst = 0.3 + 0.7 * max(weave, 1.0 - smoothstep(0.0, uEdge * 4.0, edgeDist));
+    alpha = max(alpha, uFlash * burst);
+    vec3 color = mix(uColor, vec3(1.0), clamp(uFlash * 0.85 + band * 0.45 + ember * 0.5 + outline * 0.2, 0.0, 1.0));
     gl_FragColor = vec4(color, alpha * uOpacity);
   }
 `;
@@ -89,6 +171,8 @@ function makeDecalMaterial(): THREE.ShaderMaterial {
       uHalfAngle: { value: Math.PI },
       uSize: { value: new THREE.Vector2(1, 1) },
       uEdge: { value: EDGE },
+      uStyle: { value: STYLE_VOID },
+      uTime: { value: 0 },
     },
     transparent: true,
     depthWrite: false,
@@ -143,6 +227,34 @@ function makeCrackTexture(): THREE.CanvasTexture {
   return texture;
 }
 
+/** Clusters of dead pixels, white on transparent: the terminal style's landing mark. */
+function makeGlitchTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (context) {
+    let seed = 11;
+    const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    context.fillStyle = "#ffffff";
+    const cell = 16;
+    for (let i = 0; i < 90; i += 1) {
+      const angle = random() * Math.PI * 2;
+      const distance = Math.pow(random(), 1.6) * 108;
+      const x = Math.floor((size / 2 + Math.cos(angle) * distance) / cell) * cell;
+      const y = Math.floor((size / 2 + Math.sin(angle) * distance) / cell) * cell;
+      const w = cell * (1 + Math.floor(random() * 3));
+      context.globalAlpha = 0.45 + random() * 0.55;
+      context.fillRect(x, y, w, cell);
+    }
+    context.globalAlpha = 1;
+    context.fillRect(size / 2 - cell * 1.5, size / 2 - cell / 2, cell * 3, cell);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.anisotropy = 4;
+  return texture;
+}
+
 interface Crack {
   mesh: THREE.Mesh;
   material: THREE.MeshBasicMaterial;
@@ -158,15 +270,20 @@ export function createHazardView(scene: THREE.Scene) {
   const accent = new THREE.Color(0xff3b5c);
   const projectileMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
   const projectileHalo = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+  const tokenMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+  const tokenTrail = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
   const projectiles: THREE.Mesh[] = [];
   let projectilesUsed = 0;
+  let style: HazardStyle = "void";
   const unit = {
     disc: new THREE.CircleGeometry(1, 48),
     ring: new THREE.RingGeometry(0.5, 1, 64),
     quad: new THREE.PlaneGeometry(1, 1),
     sphere: new THREE.SphereGeometry(1, 12, 10),
+    token: new THREE.BoxGeometry(1, 1, 1),
   };
   const crackTexture = makeCrackTexture();
+  const glitchTexture = makeGlitchTexture();
   const cracks: Crack[] = [];
   const seenHazards = new Set<number>();
   let lastTimeMs = 0;
@@ -188,6 +305,8 @@ export function createHazardView(scene: THREE.Scene) {
     entry.material.uniforms.uColor!.value = accent;
     entry.material.uniforms.uHalfAngle!.value = Math.PI;
     entry.material.uniforms.uEdge!.value = EDGE;
+    entry.material.uniforms.uStyle!.value = style === "terminal" ? STYLE_TERMINAL : STYLE_VOID;
+    entry.material.uniforms.uTime!.value = lastTimeMs / 1000;
     return entry;
   };
 
@@ -262,8 +381,10 @@ export function createHazardView(scene: THREE.Scene) {
       case "ring": return;
     }
     crack.mesh.position.set(x, Y - 0.02, z);
-    crack.mesh.rotation.z = Math.random() * Math.PI * 2;
+    crack.mesh.rotation.z = style === "terminal" ? 0 : Math.random() * Math.PI * 2;
     crack.mesh.scale.setScalar(radius);
+    crack.material.alphaMap = style === "terminal" ? glitchTexture : crackTexture;
+    crack.material.needsUpdate = true;
     crack.mesh.visible = true;
     crack.age = 0;
     crack.material.color.copy(accent).lerp(new THREE.Color(0x000000), 0.55);
@@ -282,20 +403,26 @@ export function createHazardView(scene: THREE.Scene) {
 
     const current = state.boss.current;
     if (current?.phase === "telegraph") {
-      const shape = previewShape(current, state.boss);
+      const shape = previewShape(current, state.boss, state.arena.radius);
       if (shape) {
         const u = current.t / current.telegraphMs;
         place(shape, u, 0, 0, 0.55 + 0.45 * u);
       }
     }
     for (const h of state.hazards) {
+      if (h.armT > 0) {
+        // Arena pulses telegraph like boss moves: a filling decal that only becomes a hazard once armed.
+        const u = 1 - h.armT / h.armMs;
+        place(h.shape, u, 0, 0, 0.5 + 0.5 * u);
+        continue;
+      }
       if (!seenHazards.has(h.id)) {
         seenHazards.add(h.id);
         if (h.source !== "ring") spawnCrack(h.shape);
       }
       if (h.repeat) {
         const pulse = 0.5 + 0.5 * Math.sin(state.timeMs / 140);
-        const settle = Math.min(1, (MOVE.zone.ttlMs - h.ttl) / 260);
+        const settle = Math.min(1, Math.max(0, MOVE.zone.ttlMs - h.ttl) / 260);
         place(h.shape, 0, 1 - settle, pulse, 0.9);
       } else {
         const life = Math.min(1, h.ttl / 220);
@@ -303,6 +430,7 @@ export function createHazardView(scene: THREE.Scene) {
         else place(h.shape, 0, Math.min(1, life * 1.3), 0, 0.85 + 0.15 * life);
       }
     }
+    const terminal = style === "terminal";
     for (const p of state.projectiles) {
       let core = projectiles[projectilesUsed * 2];
       let halo = projectiles[projectilesUsed * 2 + 1];
@@ -315,9 +443,30 @@ export function createHazardView(scene: THREE.Scene) {
       projectilesUsed += 1;
       core.visible = halo.visible = true;
       core.position.set(p.pos.x, 1.2, p.pos.z);
-      core.scale.setScalar(p.radius * 0.7);
-      halo.position.copy(core.position);
-      halo.scale.setScalar(p.radius * 1.5);
+      if (terminal) {
+        // A line of code in flight: a bright token stretched along its velocity with an additive trail behind it.
+        const speed = Math.hypot(p.vel.x, p.vel.z) || 1;
+        const yaw = Math.atan2(p.vel.x, p.vel.z);
+        core.geometry = unit.token;
+        core.material = tokenMat;
+        core.rotation.set(0, yaw, 0);
+        core.scale.set(p.radius * 0.5, p.radius * 0.5, p.radius * 2.4);
+        halo.geometry = unit.token;
+        halo.material = tokenTrail;
+        halo.rotation.set(0, yaw, 0);
+        halo.position.set(p.pos.x - (p.vel.x / speed) * p.radius * 2.6, 1.2, p.pos.z - (p.vel.z / speed) * p.radius * 2.6);
+        halo.scale.set(p.radius * 0.28, p.radius * 0.28, p.radius * 4.2);
+      } else {
+        core.geometry = unit.sphere;
+        core.material = projectileMat;
+        core.rotation.set(0, 0, 0);
+        core.scale.setScalar(p.radius * 0.7);
+        halo.geometry = unit.sphere;
+        halo.material = projectileHalo;
+        halo.rotation.set(0, 0, 0);
+        halo.position.copy(core.position);
+        halo.scale.setScalar(p.radius * 1.5);
+      }
     }
     for (let i = projectilesUsed * 2; i < projectiles.length; i += 1) { const m = projectiles[i]; if (m) m.visible = false; }
     for (let i = used; i < pool.length; i += 1) { const entry = pool[i]; if (entry) entry.mesh.visible = false; }
@@ -334,7 +483,13 @@ export function createHazardView(scene: THREE.Scene) {
   const setAccent = (hex: string) => {
     accent.set(hex);
     projectileHalo.color.copy(accent);
+    tokenTrail.color.copy(accent);
+    tokenMat.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.6);
   };
 
-  return { sync, setAccent };
+  const setStyle = (next: HazardStyle) => {
+    style = next;
+  };
+
+  return { sync, setAccent, setStyle };
 }

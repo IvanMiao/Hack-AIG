@@ -2,13 +2,17 @@ import * as THREE from "three";
 import { addOutline, createToonMaterial, RIM } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
+import { createHFHero, type HFHero } from "./hfHero";
+import { createCodexBoss, type CodexBoss } from "./codexBoss";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
+import { createPillars } from "./fx/pillars";
+import { createRimCollapse } from "./fx/rimCollapse";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
 import { attackFraction, Locomotion, type Overlay } from "./locomotion";
-import type { NemesisSpec } from "../spec";
-import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
+import { isCodexBout, type NemesisSpec } from "../spec";
+import { ARENA_FLOOR_RADIUS, ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
 /** Everything the lab may retune live. Plain mutable objects so lil-gui can bind to them directly. */
@@ -142,7 +146,7 @@ interface BossPose {
 
 const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0, swing: 0, headTilt: 0 };
 const BOSS_COIL: BossPose = { lean: -0.3, lunge: -0.35, rise: 0.4, stretch: 1.06, squash: 1.1, glow: 1, swing: -2.3, headTilt: -0.5 };
-const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
+export const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
 const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0, swing: -1.45, headTilt: 0.3 };
 const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0, swing: 0.35, headTilt: 0.6 };
 
@@ -458,6 +462,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const hot = new THREE.Color(palette.hot);
   const post = createPostFX(renderer, scene, camera, tuning.post);
   const particles = createParticles(camera, accent);
+  const rimCollapse = createRimCollapse(particles);
+  const pillars = createPillars(particles, accent);
+  scene.add(rimCollapse.object, pillars.object);
   scene.add(particles.object);
   const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
   const prepareSkyTexture = (texture: THREE.Texture) => {
@@ -546,7 +553,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const emberSpeeds = new Float32Array(96);
   for (let i = 0; i < emberPositions.length; i += 3) {
     const angle = random() * Math.PI * 2;
-    const radius = 5 + random() * 18;
+    const radius = 5 + random() * (ARENA_RADIUS * 2 + 2);
     emberPositions[i] = Math.cos(angle) * radius;
     emberPositions[i + 1] = random() * 14 - 3;
     emberPositions[i + 2] = Math.sin(angle) * radius;
@@ -572,7 +579,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   fill.target.position.set(0, 1, 0);
   const heroLamp = new THREE.PointLight(0xfff1dc, tuning.lights.heroLamp, 7, 2);
   heroLamp.position.set(0.6, 3.2, -0.4);
-  // Warm pool over the arena centre: the floor reads brightest where the fight is and falls into fog at the rim.
+  // Warm pool that follows the fight: the floor reads brightest around the fighters and falls into fog beyond them.
   const pool = new THREE.SpotLight(0xffe2c0, tuning.lights.pool, 26, 0.62, 0.85, 1.6);
   pool.position.set(0, 13, 0);
   pool.target.position.set(0, 0, 0);
@@ -582,13 +589,13 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   arenaRoot.name = "Arena";
   scene.add(arenaRoot);
   const fallbackPlatform = new THREE.Mesh(
-    new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS * 0.85, 1.2, 14, 1),
+    new THREE.CylinderGeometry(ARENA_FLOOR_RADIUS, ARENA_FLOOR_RADIUS * 0.85, 1.2, 14, 1),
     createToonMaterial(0x14161f, 0x000000, { rim: 0 }),
   );
   fallbackPlatform.position.y = -0.6;
   addOutline(fallbackPlatform, 0.015);
   const fracture = new THREE.Mesh(
-    new THREE.TorusGeometry(ARENA_RADIUS, 0.06, 6, 48),
+    new THREE.TorusGeometry(ARENA_FLOOR_RADIUS, 0.06, 6, 48),
     new THREE.MeshBasicMaterial({
       color: accent,
       transparent: true,
@@ -607,22 +614,25 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const edgeFadeMaterial = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    uniforms: { fogTint: { value: new THREE.Color(0x05040a) } },
+    uniforms: { fogTint: { value: new THREE.Color(0x05040a) }, cut: { value: 2 } },
     vertexShader: `
       varying vec2 vUv;
       void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
     `,
     fragmentShader: `
       uniform vec3 fogTint;
+      uniform float cut;
       varying vec2 vUv;
       void main() {
         float r = length(vUv - 0.5) * 2.0;
         float fade = smoothstep(0.62, 1.0, r);
-        gl_FragColor = vec4(pow(fogTint, vec3(1.7)), fade * 0.92);
+        // cut is where the collapsed rim ends: everything past it has fallen into the void.
+        float swallowed = smoothstep(cut - 0.04, cut + 0.015, r);
+        gl_FragColor = vec4(pow(fogTint, vec3(1.7)), max(fade * 0.92, swallowed * 0.98));
       }
     `,
   });
-  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_RADIUS * 1.25, 64), edgeFadeMaterial);
+  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_FLOOR_RADIUS * 1.25, 64), edgeFadeMaterial);
   edgeFade.rotation.x = -Math.PI / 2;
   edgeFade.position.y = 0.035;
   edgeFade.renderOrder = 1;
@@ -700,6 +710,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let currentSpec: NemesisSpec | null = null;
   let library: AssetLibrary | null = null;
   let playerMotion: Locomotion | null = null;
+  let hero: HFHero | null = null;
+  let heroMode = false;
+  let codexBoss: CodexBoss | null = null;
   let bossMotion: Locomotion | null = null;
   let playerMaterials: ToonMaterialState[] = [];
   let bossMaterials: ToonMaterialState[] = [];
@@ -725,6 +738,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const rollCentre = new THREE.Vector3();
   const cameraForward = new THREE.Vector3();
   const lookTarget = new THREE.Vector3();
+  const poolFocus = new THREE.Vector3();
   const burstAt = new THREE.Vector3();
   const burstDir = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
@@ -806,11 +820,25 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     arenaRoot.add(edgeFade);
   };
 
+  // Attract mode (no spec yet) is the default HF vs CODEX bout, so it gets the mascot too.
+  const wantsHero = () => (currentSpec ? isCodexBout(currentSpec) : true);
+
   const installPlayer = () => {
-    if (!library) return;
+    const useHero = wantsHero();
+    if (!useHero && !library) return;
     playerMotion?.stop();
+    playerMotion = null;
+    hero = null;
     disposeGroup(playerVisualPivot);
-    const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
+    let visual: THREE.Object3D;
+    if (useHero) {
+      hero = createHFHero();
+      visual = hero.root;
+    } else {
+      visual = instantiate(library!.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
+      playerMotion = new Locomotion(visual, library!.player.animations, { referenceSpeed: PLAYER.speed, cycleSeconds: 0.72 });
+    }
+    heroMode = useHero;
     playerVisualPivot.add(visual);
     bladePivot = createBlade();
     const hand = visual.getObjectByName("rig_forearm_R");
@@ -823,8 +851,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       playerVisualPivot.add(bladePivot);
     }
     playerMaterials = collectToonMaterials(visual, true);
-    playerMotion = new Locomotion(visual, library.player.animations, { referenceSpeed: PLAYER.speed, cycleSeconds: 0.72 });
   };
+  installPlayer();
 
   const installBoss = (spec: NemesisSpec, keepSpawn = false) => {
     const spawnBefore = bossSpawn;
@@ -832,8 +860,14 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     bossMotion = null;
     disposeGroup(bossVisualPivot);
     bossMaterials = [];
+    codexBoss = null;
     const asset = library?.bosses[spec.identity.silhouette];
-    if (asset) {
+    if (isCodexBout(spec)) {
+      bossRig = EMPTY_RIG;
+      codexBoss = createCodexBoss();
+      bossVisualPivot.add(codexBoss.root);
+      bossMaterials = collectToonMaterials(codexBoss.root);
+    } else if (asset) {
       const visual = instantiate(asset, spec.identity.palette, { outline: 0.024 });
       bossVisualPivot.add(visual);
       bossRig = buildBossRig(visual, spec.identity.silhouette);
@@ -863,7 +897,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
   const preloadBoss = async (spec: NemesisSpec, onProgress?: (fraction: number) => void) => {
     await ready;
-    if (!library || disposed) return;
+    if (!library || disposed || isCodexBout(spec)) return;
     const { silhouette } = spec.identity;
     const hadModel = !!library.bosses[silhouette];
     try {
@@ -904,10 +938,12 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (role === "floor" && object.material instanceof THREE.MeshToonMaterial) object.material.color.set(palette.floor);
     });
     hazards.setAccent(palette.accent);
+    hazards.setStyle(isCodexBout(spec) ? "terminal" : "void");
   };
 
   const applySpec = (spec: NemesisSpec) => {
     currentSpec = spec;
+    if (isCodexBout(spec) !== heroMode) installPlayer();
     applyAccent(spec);
     installBoss(spec);
     if (library && !library.bosses[spec.identity.silhouette]) void preloadBoss(spec);
@@ -1009,6 +1045,18 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
           particles.burst(burstAt, { count: 160, color: accent, color2: hot, speed: 9, spread: 1, lifeMs: 1400, size: 0.14, gravity: -1.5, drag: 1.4 });
         }
       }
+      if (event.type === "arenaShrink") {
+        shake = Math.max(shake, 0.5);
+        rimCollapse.collapse(event.from, event.to, event.ms);
+      }
+      if (event.type === "arenaPulse" && fxOn) {
+        burstAt.set(event.at.x, 0.3, event.at.z);
+        if (event.mutator === "ember") particles.burst(burstAt, { count: 40, color: 0xff6a2b, color2: 0x3a0a02, speed: 3.5, spread: 0.6, dir: UP, lifeMs: 900, size: 0.16, gravity: -2, drag: 1.2 });
+        else if (event.mutator === "tempest") particles.burst(burstAt, { count: 30, color: 0xcfe9ff, color2: accent, speed: 6, spread: 0.5, dir: UP, lifeMs: 500, size: 0.1, gravity: 4, drag: 2.5, stretch: 3 });
+        else particles.burst(burstAt, { count: 24, color: 0x8a0a1c, color2: 0x1a0205, speed: 2, spread: 1, lifeMs: 800, size: 0.2, gravity: 6, drag: 2 });
+      }
+      if (event.type === "obstaclesRaised") shake = Math.max(shake, 0.3);
+      if (event.type === "obstacleBroken") shake = Math.max(shake, 0.28);
       if (event.type === "bossStagger" && fxOn) {
         burstAt.copy(boss.position).setY(0.4);
         particles.burst(burstAt, { count: 40, color: 0x8a8578, color2: 0x1b1a1d, speed: 4, spread: 0.8, dir: UP, lifeMs: 800, size: 0.2, gravity: 8, drag: 1.5 });
@@ -1085,6 +1133,16 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     playerVisualPivot.quaternion.copy(poseQuaternion);
     if (bladePivot && !bladeOnHand) bladePivot.rotation.set(pose.bladeX, 0, pose.bladeZ);
     if (bladeMaterial) bladeMaterial.emissive.copy(accent).multiplyScalar(pose.charge * 0.9);
+    hero?.update(step, {
+      speed: playerSpeed,
+      action: p.action,
+      actionT: p.actionT,
+      hitFlash: p.hitFlash,
+      bladeX: pose.bladeX,
+      bladeZ: pose.bladeZ,
+      charge: pose.charge,
+      reducedMotion: reducedMotion.matches,
+    });
 
     const heavy = p.action === "heavy";
     slashArc.visible = pose.slash > 0.01;
@@ -1146,6 +1204,18 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         entry.material.emissive.lerp(new THREE.Color(0xffd166), 0.4 + 0.3 * Math.sin(state.timeMs / 60));
       }
     }
+    codexBoss?.update(step, {
+      timeMs: state.timeMs,
+      glow: bossPoseNow.glow,
+      headTilt: bossPoseNow.headTilt,
+      hitFlash: b.hitFlash,
+      weakness: b.weaknessT > 0,
+      staggered: b.staggerT > 0,
+      telegraphing: b.current?.phase === "telegraph",
+      moveType: b.current?.move.type ?? null,
+      phaseIndex: b.phaseIndex,
+      reducedMotion: reducedMotion.matches,
+    });
 
     hazards.sync(state);
     toBoss.subVectors(boss.position, player.position).setY(0);
@@ -1158,9 +1228,12 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     key.intensity = tuning.lights.key;
     rim.intensity = tuning.lights.rim;
     fill.intensity = tuning.lights.fill;
-    heroLamp.intensity = tuning.lights.heroLamp;
+    heroLamp.intensity = tuning.lights.heroLamp * (heroMode ? 0.45 : 1);
     pool.intensity = tuning.lights.pool;
     pool.distance = tuning.lights.poolRadius * 2.9;
+    poolFocus.set((player.position.x + boss.position.x) / 2, 0, (player.position.z + boss.position.z) / 2);
+    pool.target.position.lerp(poolFocus, 1 - Math.exp(-step * 3));
+    pool.position.set(pool.target.position.x, 13, pool.target.position.z);
     RIM.strength.value = tuning.rim.strength;
     RIM.power.value = tuning.rim.power;
     if (scene.fog instanceof THREE.FogExp2) scene.fog.density = tuning.fog.density;
@@ -1251,6 +1324,11 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     bossShadow.position.x = boss.position.x;
     bossShadow.position.z = boss.position.z;
     if (bossShadow.material instanceof THREE.MeshBasicMaterial) bossShadow.material.opacity = 0.45 + reveal * 0.35;
+    const rimScale = (state.arena.radius + (ARENA_FLOOR_RADIUS - ARENA_RADIUS)) / ARENA_FLOOR_RADIUS;
+    fracture.scale.setScalar(rimScale);
+    edgeFadeMaterial.uniforms.cut!.value = state.arena.radius < ARENA_RADIUS - 1e-3 ? rimScale / 1.25 : 2;
+    rimCollapse.update(reducedMotion.matches ? step * 3 : step);
+    pillars.sync(state, step, events);
     particles.ambient(fxOn && tuning.fx.ambient);
     particles.update(step);
     post.render(step);
@@ -1310,6 +1388,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (generatedSkyTexture) textures.add(generatedSkyTexture);
       for (const texture of textures) texture.dispose();
       if (library) disposeAssetLibrary(library);
+      rimCollapse.dispose();
+      pillars.dispose();
       particles.dispose();
       post.dispose();
       renderer.dispose();

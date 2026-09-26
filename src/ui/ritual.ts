@@ -84,14 +84,14 @@ export function createRitual(): Ritual {
       fill.style.width = "0%";
       progress.setAttribute("aria-valuenow", "0");
       echo.textContent = `“${incantation}”`;
-      status.textContent = "The void is listening…";
+      status.textContent = "Spinning up the sandbox…";
       enter.disabled = true;
       for (const name of CARD_NAMES) {
         const el = card(name);
         el.classList.remove("revealed", "ready", "failed");
         el.style.removeProperty("--card-art");
         childOf(el, ".card-body").textContent = "";
-        childOf(el, ".card-badge").textContent = "forging";
+        childOf(el, ".card-badge").textContent = "compiling";
       }
       panel.classList.remove("hidden");
     },
@@ -107,7 +107,7 @@ export function createRitual(): Ritual {
       childOf(card("arena"), ".card-body").innerHTML =
         `<span>${text(arenaTheme)}</span><span class="whisper">opening: ${weakness.trigger.replace("_", " ")} ×${weakness.multiplier}</span>`;
       CARD_NAMES.forEach((name, i) => window.setTimeout(() => card(name).classList.add("revealed"), 120 + i * 260));
-      status.textContent = `${identity.name} takes shape. Its voice, sky and music are still being forged…`;
+      status.textContent = `${identity.name} takes shape. Its voice, sky and music are still compiling…`;
       enter.disabled = false;
     },
     markAsset(bundle) {
@@ -121,7 +121,7 @@ export function createRitual(): Ritual {
     failAsset(kind) {
       const el = card(CARD_FOR_ASSET[kind]);
       el.classList.add("failed");
-      childOf(el, ".card-badge").textContent = "silent";
+      childOf(el, ".card-badge").textContent = "timed out";
       settle();
     },
     markModel(fraction) {

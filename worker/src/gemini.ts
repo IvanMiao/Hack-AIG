@@ -3,8 +3,9 @@ import type { Env } from "./env";
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 /**
- * Gemini's responseSchema is an OpenAPI subset: no `pattern`, `additionalProperties`, or tuple `items`.
- * Strip those from the shared ajv schema so one source of truth drives both validation and generation.
+ * Gemini takes JSON Schema in `generationConfig.responseFormat.text.schema`, but draft-07 tuple `items`
+ * is not portable and `pattern`/`additionalProperties` are enforced by ajv anyway, so strip them here
+ * and keep the ajv schema as the single source of truth.
  */
 export function toGeminiSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(toGeminiSchema);
@@ -34,8 +35,7 @@ export async function generateStructured<T>(env: Env, request: StructuredRequest
       contents: [{ role: "user", parts: [{ text: request.user }] }],
       generationConfig: {
         temperature: request.temperature ?? 0.9,
-        responseMimeType: "application/json",
-        responseSchema: toGeminiSchema(request.schema),
+        responseFormat: { text: { mimeType: "application/json", schema: toGeminiSchema(request.schema) } },
       },
     }),
   });

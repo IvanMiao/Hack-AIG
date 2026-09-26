@@ -1,17 +1,59 @@
 import * as THREE from "three";
-import { addOutline, createToonMaterial } from "./materials";
+import { addOutline, createToonMaterial, RIM } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
+import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
+import { createParticles } from "./fx/particles";
+import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
 import type { NemesisSpec } from "../spec";
-import { ARENA_RADIUS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
+import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
+
+/** Everything the lab may retune live. Plain mutable objects so lil-gui can bind to them directly. */
+export interface StageTuning {
+  lights: {
+    hemisphere: number;
+    key: number;
+    rim: number;
+    fill: number;
+    heroLamp: number;
+    /** Warm accent pool on the arena centre. */
+    pool: number;
+    poolRadius: number;
+  };
+  rim: { strength: number; power: number };
+  fog: { density: number };
+  camera: { fov: number; distance: number; side: number; height: number; lag: number; shake: number; punch: number };
+  fx: { particles: boolean; ambient: boolean };
+  post: PostSettings;
+}
+
+export interface StageDebug {
+  /** Draw player/boss collision radii and the player's attack reach. */
+  hitboxes: boolean;
+  /** Freeze the auto camera so an external controller (orbit) may drive it. */
+  freeCamera: boolean;
+}
+
+export const DEFAULT_TUNING = (): StageTuning => ({
+  lights: { hemisphere: 1.35, key: 3.6, rim: 3.4, fill: 1.5, heroLamp: 14, pool: 320, poolRadius: 9 },
+  rim: { strength: 0.85, power: 3.2 },
+  fog: { density: 0.022 },
+  camera: { fov: 55, distance: 6.8, side: 4.2, height: 4.6, lag: 8, shake: 0.6, punch: 1 },
+  fx: { particles: true, ambient: true },
+  post: { ...DEFAULT_POST },
+});
 
 export interface Stage {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   ready: Promise<void>;
+  tuning: StageTuning;
+  debug: StageDebug;
+  /** The hand-tuned palette currently applied (derived from the spec's element + accent). */
+  palette(): Palette;
   applySpec(spec: NemesisSpec): void;
   /** Fetch the boss model for this spec (arena/player load eagerly; bosses stream in per silhouette). Resolves even if the model fails. */
   preloadBoss(spec: NemesisSpec, onProgress?: (fraction: number) => void): Promise<void>;
@@ -333,19 +375,25 @@ function makeShadow(size: number): THREE.Mesh {
   return shadow;
 }
 
-export function createStage(canvas: HTMLCanvasElement): Stage {
+export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEFAULT_TUNING()): Stage {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.3;
+  renderer.toneMappingExposure = tuning.post.exposure;
+  const debug: StageDebug = { hitboxes: false, freeCamera: false };
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x030309);
-  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 240);
+  const camera = new THREE.PerspectiveCamera(tuning.camera.fov, 1, 0.1, 240);
   camera.position.set(14, 7, 14);
   camera.lookAt(0, 1, 0);
-  const accent = new THREE.Color("#7fdcff");
+  let palette: Palette = DEFAULT_PALETTE;
+  const accent = new THREE.Color(palette.accent);
+  const hot = new THREE.Color(palette.hot);
+  const post = createPostFX(renderer, scene, camera, tuning.post);
+  const particles = createParticles(camera, accent);
+  scene.add(particles.object);
   const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
   const prepareSkyTexture = (texture: THREE.Texture) => {
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -399,7 +447,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
         float band = exp(-pow((skyHeight + 0.03) * 5.5, 2.0));
         vec3 base = mix(upper, horizon, band * 0.3);
         vec3 tint = accent * mix(0.1, 0.5, light) * (1.0 - zenith * 0.85);
-        gl_FragColor = vec4(mix(base, tint, clouds) + accent * band * 0.12, 1.0);
+        vec3 sky = mix(base, tint, clouds) + accent * band * 0.12;
+        // Sky colours are authored as display values; the composer treats this as linear, so decode.
+        gl_FragColor = vec4(pow(max(sky, 0.0), vec3(1.7)), 1.0);
       }
     `,
   });
@@ -445,26 +495,30 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   });
   scene.add(new THREE.Points(emberGeometry, emberMaterial));
 
-  const hemisphere = new THREE.HemisphereLight(0xaab8df, 0x3a3150, 2.6);
-  const key = new THREE.DirectionalLight(0xf1e8db, 4.5);
+  const hemisphere = new THREE.HemisphereLight(0xaab8df, 0x3a3150, tuning.lights.hemisphere);
+  const key = new THREE.DirectionalLight(0xf1e8db, tuning.lights.key);
   key.position.set(2, 11, 8);
   key.target.position.set(0, 1, 0);
-  const rim = new THREE.DirectionalLight(accent, 3.2);
+  const rim = new THREE.DirectionalLight(accent, tuning.lights.rim);
   rim.position.set(0, 8, -13);
   rim.target.position.set(0, 1, -1);
   // Camera-following fill so the hero is lit from the viewer's side no matter where the fight circles.
-  const fill = new THREE.DirectionalLight(0xe4e9ff, 2.4);
+  const fill = new THREE.DirectionalLight(0xe4e9ff, tuning.lights.fill);
   fill.target.position.set(0, 1, 0);
-  const heroLamp = new THREE.PointLight(0xfff1dc, 18, 7, 2);
+  const heroLamp = new THREE.PointLight(0xfff1dc, tuning.lights.heroLamp, 7, 2);
   heroLamp.position.set(0.6, 3.2, -0.4);
-  scene.add(hemisphere, key, key.target, rim, rim.target, fill, fill.target);
+  // Warm pool over the arena centre: the floor reads brightest where the fight is and falls into fog at the rim.
+  const pool = new THREE.SpotLight(0xffe2c0, tuning.lights.pool, 26, 0.62, 0.85, 1.6);
+  pool.position.set(0, 13, 0);
+  pool.target.position.set(0, 0, 0);
+  scene.add(hemisphere, key, key.target, rim, rim.target, fill, fill.target, pool, pool.target);
 
   const arenaRoot = new THREE.Group();
   arenaRoot.name = "Arena";
   scene.add(arenaRoot);
   const fallbackPlatform = new THREE.Mesh(
     new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS * 0.85, 1.2, 14, 1),
-    createToonMaterial(0x14161f),
+    createToonMaterial(0x14161f, 0x000000, { rim: 0 }),
   );
   fallbackPlatform.position.y = -0.6;
   addOutline(fallbackPlatform, 0.015);
@@ -499,7 +553,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       void main() {
         float r = length(vUv - 0.5) * 2.0;
         float fade = smoothstep(0.62, 1.0, r);
-        gl_FragColor = vec4(fogTint, fade * 0.92);
+        gl_FragColor = vec4(pow(fogTint, vec3(1.7)), fade * 0.92);
       }
     `,
   });
@@ -549,6 +603,29 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   scene.add(playerShadow, bossShadow);
   const hazards = createHazardView(scene);
 
+  // Debug overlay: collision radii + player reach. Only drawn when debug.hitboxes is on.
+  const debugMaterial = new THREE.LineBasicMaterial({ color: 0x4dff88, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false });
+  const debugReachMaterial = new THREE.LineBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false });
+  const makeCircle = (radius: number, material: THREE.LineBasicMaterial) => {
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= 48; i += 1) {
+      const a = (i / 48) * Math.PI * 2;
+      points.push(new THREE.Vector3(Math.cos(a) * radius, 0.05, Math.sin(a) * radius));
+    }
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material);
+    line.renderOrder = 50;
+    line.visible = false;
+    return line;
+  };
+  const playerRadiusLine = makeCircle(PLAYER.radius, debugMaterial);
+  const bossRadiusLine = makeCircle(BOSS.radius, debugMaterial);
+  const meleeRangeLine = makeCircle(BOSS.meleeRange, debugReachMaterial);
+  meleeRangeLine.material = new THREE.LineDashedMaterial({ color: 0xffd166, dashSize: 0.3, gapSize: 0.25, transparent: true, opacity: 0.45, depthTest: false, toneMapped: false });
+  meleeRangeLine.computeLineDistances();
+  const reachLine = makeCircle(1, debugReachMaterial);
+  scene.add(playerRadiusLine, bossRadiusLine, meleeRangeLine, reachLine);
+  let fovPunch = 0;
+
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   let mode: "attract" | "fight" = "attract";
   let disposed = false;
@@ -579,6 +656,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const rollCentre = new THREE.Vector3();
   const cameraForward = new THREE.Vector3();
   const lookTarget = new THREE.Vector3();
+  const burstAt = new THREE.Vector3();
+  const burstDir = new THREE.Vector3();
+  const UP = new THREE.Vector3(0, 1, 0);
   let lastActionT = 0;
   let impactT = 1;
   let runeGroup: THREE.Group | null = null;
@@ -625,7 +705,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       // The walkable slab is the one big lit surface; keep it deep blue-grey so the hero and decals carry the light.
       if (name.includes("walkable") || name.includes("floor slab")) {
         const source = object.material instanceof THREE.MeshToonMaterial ? object.material : null;
-        object.material = createToonMaterial(0x181b28, 0x04050b, { map: source?.map ?? undefined, normalMap: source?.normalMap ?? undefined });
+        object.material = createToonMaterial(palette.floor, 0x04050b, { map: source?.map ?? undefined, normalMap: source?.normalMap ?? undefined, rim: 0 });
         object.userData.materialRole = "floor";
       }
       if (name.includes("hairline floor fracture")) {
@@ -721,14 +801,20 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   };
 
   const applyAccent = (spec: NemesisSpec) => {
-    const color = new THREE.Color(spec.art.accentHex);
+    palette = resolvePalette(spec);
+    const color = new THREE.Color(palette.accent);
     accent.copy(color);
+    hot.set(palette.hot);
+    RIM.color.value.set(palette.rim);
     (skyMaterial.uniforms.accent!.value as THREE.Color).copy(color);
     (skyMaterial.uniforms.horizon!.value as THREE.Color).copy(color).multiplyScalar(0.16);
+    (skyMaterial.uniforms.upper!.value as THREE.Color).set(palette.bg);
+    if (scene.background instanceof THREE.Color) scene.background.set(palette.bg);
     emberMaterial.color.copy(color);
-    rim.color.copy(color);
-    const fogColor = color.clone().lerp(new THREE.Color("#05040a"), 0.86);
-    scene.fog = new THREE.FogExp2(fogColor, 0.022);
+    rim.color.set(palette.rim);
+    pool.color.copy(color).lerp(new THREE.Color(0xffe2c0), 0.6);
+    const fogColor = new THREE.Color(palette.fog);
+    scene.fog = new THREE.FogExp2(fogColor, tuning.fog.density);
     (edgeFadeMaterial.uniforms.fogTint!.value as THREE.Color).copy(fogColor);
     floorCrackMaterial.color.copy(color).multiplyScalar(0.5);
     debrisEdgeMaterial.color.copy(color).multiplyScalar(0.28);
@@ -739,8 +825,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       if ((role === "accent" || role === "glow") && object.material instanceof THREE.MeshBasicMaterial) {
         object.material.color.copy(color);
       }
+      if (role === "floor" && object.material instanceof THREE.MeshToonMaterial) object.material.color.set(palette.floor);
     });
-    hazards.setAccent(spec.art.accentHex);
+    hazards.setAccent(palette.accent);
   };
 
   const applySpec = (spec: NemesisSpec) => {
@@ -798,6 +885,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
 
   const resize = () => {
     renderer.setSize(window.innerWidth, window.innerHeight, false);
+    post.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
   };
@@ -807,17 +895,73 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const render = (dt: number, state: BattleState, events: readonly BattleEvent[]) => {
     const step = Math.min(dt, 0.05);
     elapsed += step;
-    for (const event of events) {
-      if (event.type === "playerHit") shake = Math.max(shake, 0.35);
-      if (event.type === "bossHit") shake = Math.max(shake, event.heavy ? 0.25 : 0.1);
-      if (event.type === "phaseChange") shake = Math.max(shake, 0.6);
-      if (event.type === "moveActive" && (event.move === "nova" || event.move === "charge")) shake = Math.max(shake, 0.2);
-    }
-
     const p = state.player;
     const b = state.boss;
     player.position.set(p.pos.x, 0, p.pos.z);
     boss.position.set(b.pos.x, 0, b.pos.z);
+    const fxOn = tuning.fx.particles && !reducedMotion.matches;
+    for (const event of events) {
+      if (event.type === "playerHit") {
+        shake = Math.max(shake, 0.35);
+        post.pulse(0xff2d4f, 1);
+        if (fxOn) {
+          burstAt.set(p.pos.x, 1.1, p.pos.z);
+          burstDir.subVectors(player.position, boss.position).setY(0.4).normalize();
+          particles.burst(burstAt, { count: 26, color: 0xff3b5c, color2: 0x2a0308, speed: 6, spread: 0.6, dir: burstDir, lifeMs: 520, size: 0.11, gravity: 9, drag: 2.5, stretch: 2.2 });
+          particles.burst(burstAt, { count: 18, color: 0x1a1216, color2: 0x000000, speed: 2.2, spread: 1, lifeMs: 900, size: 0.22, gravity: 1.5, drag: 1.2 });
+        }
+      }
+      if (event.type === "bossHit") {
+        shake = Math.max(shake, event.heavy ? 0.25 : 0.1);
+        if (event.heavy) {
+          post.whiteFlash(0.22);
+          fovPunch = Math.max(fovPunch, 1);
+        }
+        if (fxOn) {
+          burstAt.copy(player.position).addScaledVector(toBoss, PLAYER.radius + 1.3).setY(1.25);
+          burstDir.copy(toBoss).negate().setY(0.55).normalize();
+          particles.burst(burstAt, { count: event.heavy ? 46 : 22, color: hot, color2: accent, speed: event.heavy ? 11 : 7.5, spread: 0.45, dir: burstDir, lifeMs: 420, size: 0.07, gravity: 14, drag: 3, stretch: 3.4 });
+          particles.burst(burstAt, { count: 8, color: 0xffffff, color2: hot, speed: 1.2, spread: 1, lifeMs: 160, size: event.heavy ? 0.7 : 0.4, drag: 6 });
+        }
+      }
+      if (event.type === "phaseChange") {
+        shake = Math.max(shake, 0.6);
+        post.whiteFlash(0.5);
+        post.pulse(accent, 0.8);
+        if (fxOn) {
+          burstAt.copy(boss.position).setY(1.4);
+          particles.burst(burstAt, { count: 160, color: accent, color2: hot, speed: 9, spread: 1, lifeMs: 1400, size: 0.14, gravity: -1.5, drag: 1.4 });
+        }
+      }
+      if (event.type === "bossStagger" && fxOn) {
+        burstAt.copy(boss.position).setY(0.4);
+        particles.burst(burstAt, { count: 40, color: 0x8a8578, color2: 0x1b1a1d, speed: 4, spread: 0.8, dir: UP, lifeMs: 800, size: 0.2, gravity: 8, drag: 1.5 });
+      }
+      if (event.type === "bossDefeat") {
+        post.whiteFlash(0.9);
+        fovPunch = Math.max(fovPunch, 1.6);
+        if (fxOn) {
+          burstAt.copy(boss.position).setY(1.6);
+          particles.burst(burstAt, { count: 320, color: hot, color2: accent, speed: 12, spread: 1, lifeMs: 2200, size: 0.16, gravity: -0.8, drag: 1.1 });
+          particles.burst(burstAt, { count: 160, color: 0x0b0a10, color2: 0x000000, speed: 4, spread: 1, lifeMs: 2600, size: 0.42, gravity: -0.4, drag: 0.9 });
+        }
+      }
+      if (event.type === "playerDeath") post.pulse(0xff2d4f, 1);
+      if (event.type === "playerRoll" && event.dodged) {
+        post.pulse(accent, 0.5);
+        if (fxOn) {
+          burstAt.copy(player.position).setY(0.9);
+          particles.burst(burstAt, { count: 24, color: hot, color2: accent, speed: 3.5, spread: 1, lifeMs: 380, size: 0.09, drag: 4, stretch: 1.6 });
+        }
+      }
+      if (event.type === "moveActive") {
+        if (event.move === "nova" || event.move === "charge") shake = Math.max(shake, 0.2);
+        if (fxOn && (event.move === "nova" || event.move === "sweep" || event.move === "blink")) {
+          burstAt.copy(boss.position).setY(0.3);
+          particles.burst(burstAt, { count: event.move === "nova" ? 90 : 30, color: accent, color2: hot, speed: event.move === "nova" ? 10 : 5, spread: event.move === "nova" ? 0.25 : 0.7, dir: UP, lifeMs: 700, size: 0.12, gravity: 6, drag: 2 });
+        }
+      }
+    }
     player.rotation.y = Math.atan2(p.facing.x, p.facing.z);
     boss.rotation.y = Math.atan2(b.facing.x, b.facing.z);
 
@@ -917,8 +1061,46 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     if (cameraYaw !== null && mode === "fight") toBoss.set(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
     else toBoss.normalize();
     const right = new THREE.Vector3(-toBoss.z, 0, toBoss.x);
-    if (mode === "fight") {
-      desired.copy(player.position).addScaledVector(toBoss, -6.8).addScaledVector(right, 4.2).setY(4.6);
+
+    hemisphere.intensity = tuning.lights.hemisphere;
+    key.intensity = tuning.lights.key;
+    rim.intensity = tuning.lights.rim;
+    fill.intensity = tuning.lights.fill;
+    heroLamp.intensity = tuning.lights.heroLamp;
+    pool.intensity = tuning.lights.pool;
+    pool.distance = tuning.lights.poolRadius * 2.9;
+    RIM.strength.value = tuning.rim.strength;
+    RIM.power.value = tuning.rim.power;
+    if (scene.fog instanceof THREE.FogExp2) scene.fog.density = tuning.fog.density;
+
+    playerRadiusLine.visible = bossRadiusLine.visible = meleeRangeLine.visible = debug.hitboxes;
+    if (debug.hitboxes) {
+      playerRadiusLine.position.copy(player.position);
+      bossRadiusLine.position.copy(boss.position);
+      meleeRangeLine.position.copy(boss.position);
+      const attack = p.action === "light" ? PLAYER.light : p.action === "heavy" ? PLAYER.heavy : null;
+      reachLine.visible = attack !== null;
+      if (attack) {
+        const inActive = p.actionT >= attack.windupMs && p.actionT < attack.windupMs + attack.activeMs;
+        reachLine.position.copy(player.position);
+        reachLine.scale.setScalar(attack.range + BOSS.radius);
+        debugReachMaterial.color.set(inActive ? 0xff5a3c : 0xffd166);
+      }
+    } else {
+      reachLine.visible = false;
+    }
+
+    fovPunch = Math.max(0, fovPunch - step / 0.22);
+    const targetFov = tuning.camera.fov + easeOut(fovPunch) * 6 * tuning.camera.punch;
+    if (Math.abs(camera.fov - targetFov) > 0.01) {
+      camera.fov = targetFov;
+      camera.updateProjectionMatrix();
+    }
+
+    if (debug.freeCamera) {
+      // External controller owns the camera; still keep the sky and fill following it.
+    } else if (mode === "fight") {
+      desired.copy(player.position).addScaledVector(toBoss, -tuning.camera.distance).addScaledVector(right, tuning.camera.side).setY(tuning.camera.height);
       const focusHeight = currentSpec
         ? THREE.MathUtils.clamp(BOSS_HEIGHTS[currentSpec.identity.silhouette] * (2 / 3), 1.35, 2.8)
         : 2;
@@ -926,7 +1108,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
         camera.position.copy(desired);
         first = false;
       } else {
-        camera.position.lerp(desired, 1 - Math.exp(-step * 8));
+        camera.position.lerp(desired, 1 - Math.exp(-step * tuning.camera.lag));
       }
       // Frame both fighters: aim between the hero's chest and the boss's focus point so the hero stays in shot.
       lookTarget.set(player.position.x, 1.2, player.position.z)
@@ -944,8 +1126,8 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       camera.lookAt(0, 1.2, 0);
     }
     shake = Math.max(0, shake - step * 2.2);
-    shakeOffset.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, 0).multiplyScalar(0.6);
-    camera.position.add(shakeOffset);
+    shakeOffset.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, 0).multiplyScalar(tuning.camera.shake);
+    if (!debug.freeCamera) camera.position.add(shakeOffset);
     skyDome.position.copy(camera.position);
     fill.position.copy(camera.position).add(new THREE.Vector3(0, 4, 0)).addScaledVector(right, -2.5);
     fill.target.position.copy(player.position).setY(1);
@@ -981,7 +1163,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     bossShadow.position.x = boss.position.x;
     bossShadow.position.z = boss.position.z;
     if (bossShadow.material instanceof THREE.MeshBasicMaterial) bossShadow.material.opacity = 0.45 + reveal * 0.35;
-    renderer.render(scene, camera);
+    particles.ambient(fxOn && tuning.fx.ambient);
+    particles.update(step);
+    post.render(step);
   };
 
   return {
@@ -989,6 +1173,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     scene,
     camera,
     ready,
+    tuning,
+    debug,
+    palette: () => palette,
     applySpec,
     preloadBoss,
     setSky,
@@ -1035,6 +1222,8 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       if (generatedSkyTexture) textures.add(generatedSkyTexture);
       for (const texture of textures) texture.dispose();
       if (library) disposeAssetLibrary(library);
+      particles.dispose();
+      post.dispose();
       renderer.dispose();
     },
   };

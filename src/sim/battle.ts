@@ -5,9 +5,20 @@ import { createRng, type Rng } from "./rng";
 import type { BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
 import { add, clampToDisc, dist, dot, len, norm, perp, rotate, scale, sub, vec } from "./vec";
 
+/** Lab-only switches. All default off; the shipped game never touches them. */
+export interface BattleDebug {
+  /** false → the boss never starts a move on its own (forced moves still work). */
+  bossAi: boolean;
+  /** true → hazards and projectiles still resolve but the player takes no damage. */
+  playerInvulnerable: boolean;
+  /** Start `type` immediately (idle boss only). Returns false if the boss is busy or the move is not in any phase. */
+  forceMove(type: MoveType, template?: Partial<Move>): boolean;
+}
+
 export interface Battle {
   readonly spec: NemesisSpec;
   readonly state: BattleState;
+  readonly debug: BattleDebug;
   /** Advance one fixed tick. Returns the events that happened during it. */
   step(input: PlayerInput): BattleEvent[];
 }
@@ -77,6 +88,7 @@ export function moveTiming(type: MoveType): { activeMs: number; recoverMs: numbe
 export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const state = createInitialState(spec, seed);
   const rng: Rng = createRng(seed);
+  const pendingEvents: BattleEvent[] = [];
   const tickAttack = (attack: typeof PLAYER.light | typeof PLAYER.heavy) => attack.windupMs + attack.activeMs + attack.recoverMs;
 
   // ---- player -------------------------------------------------------------------------------
@@ -161,7 +173,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       events.push({ type: "playerRoll", dodged: true });
       return;
     }
-    p.hp = Math.max(0, p.hp - damage);
+    p.hp = debug.playerInvulnerable ? p.hp : Math.max(0, p.hp - damage);
     p.hitFlash = 200;
     state.log.hitsTaken[source] = (state.log.hitsTaken[source] ?? 0) + 1;
     events.push({ type: "playerHit", move: source, damage, hp: p.hp });
@@ -324,7 +336,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       }
       b.facing = toPlayer;
       if (dist(b.pos, p.pos) > BOSS.meleeRange) b.pos = add(b.pos, toPlayer, (BOSS.walkSpeed * TICK_MS) / 1000);
-      if (b.idleT >= b.idleFor && b.invulnerableT <= 0) {
+      if (debug.bossAi && b.idleT >= b.idleFor && b.invulnerableT <= 0) {
         beginMove(chooseMove(phase), false, events);
         b.idleT = 0;
         b.idleFor = idleGap(spec.stats.aggression) * rng.range(0.8, 1.2);
@@ -403,6 +415,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const step = (input: PlayerInput): BattleEvent[] => {
     const events: BattleEvent[] = [];
     if (state.outcome !== "fighting") return events;
+    if (pendingEvents.length > 0) events.push(...pendingEvents.splice(0));
     state.timeMs += TICK_MS;
     stepPlayer(input, events);
     if (state.outcome !== "fighting") return events;
@@ -412,7 +425,23 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     return events;
   };
 
-  return { spec, state, step };
+  const debug: BattleDebug = {
+    bossAi: true,
+    playerInvulnerable: false,
+    forceMove(type, template) {
+      const b = state.boss;
+      if (b.current || b.staggerT > 0 || state.outcome !== "fighting") return false;
+      const known = spec.phases.flatMap((phase) => phase.moves).find((m) => m.type === type);
+      const move: Move = { ...(known ?? { type, telegraphMs: 1000, damage: 20, scale: 1, count: 3 }), ...template, type };
+      const events: BattleEvent[] = [];
+      beginMove(move, false, events);
+      b.idleT = 0;
+      pendingEvents.push(...events);
+      return true;
+    },
+  };
+
+  return { spec, state, debug, step };
 }
 
 /** Ground decal to draw while a move is telegraphed: the same geometry the hitbox will use. */

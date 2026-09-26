@@ -100,6 +100,14 @@ button.example-chip:hover:not(:disabled) { color: var(--bone); }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
 .actions button { min-width: 170px; }
 .status { min-height: 1.4em; margin: 4px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+.bound { width: min(640px, 92vw); margin-top: 14px; }
+.bound-label { margin: 0 0 8px; color: var(--muted); font-size: 10px; letter-spacing: 0.22em; text-align: center; text-transform: uppercase; }
+.bound-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+button.bound-card { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-height: 0; padding: 9px 11px 8px; text-align: left; text-transform: none; letter-spacing: 0; background: rgba(9, 11, 18, 0.72); border-color: color-mix(in srgb, var(--bound-accent) 28%, transparent); border-left: 3px solid var(--bound-accent); }
+button.bound-card:hover:not(:disabled) { border-color: var(--bound-accent); box-shadow: 0 0 16px color-mix(in srgb, var(--bound-accent) 24%, transparent); }
+button.bound-card strong { color: var(--bone); font-family: var(--font-display); font-size: 13px; letter-spacing: 0.04em; }
+button.bound-card em { color: var(--muted); font-size: 10px; font-style: italic; }
+button.bound-card span { color: var(--bound-accent); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; }
 .spinner { display: inline-block; width: 14px; height: 14px; margin-right: 9px; vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
 
 #ritual {
@@ -241,6 +249,7 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
   button.example-chip { min-height: 44px; padding: 0 9px; font-size: 10px; }
   .actions { flex-direction: column; align-items: stretch; }
   .actions button { width: 100%; }
+  .bound-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
   #ritual { gap: 10px; padding: 16px 10px; }
   .cards { width: min(360px, 94vw); grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .card { min-height: 112px; padding: 9px 11px; }

@@ -30,14 +30,14 @@
 
 ### H1 · 0:45–2:00 — 战斗核心 + 生成通路
 - A：确定性战斗模拟核心（纯逻辑、无渲染依赖、可 headless 测试），招式原语 **8 个**：`sweep thrust charge nova ring volley zone blink`；玩家：**肩后锁定相机**（Tab）、体力、轻/重击、翻滚 i-frame。先用一个硬编码 spec 打起来。
-- A：美术方向定稿并落地基础材质（见 §4）。
+- A：美术方向定稿并落地基础材质（见 §3b/§4）；`#hud` DOM 层骨架。
 - B：`POST /forge {incantation}` → Gemini `gemini-3.8-flash` structured output → ajv 校验 + clamp → 返回 spec；失败返回兜底 spec。同 incantation 命中 KV 缓存。
 - C：`normalize()` + 公平不变量（telegraph ≥ 500ms、单招伤害 ≤ 35% HP、每阶段 ≥ 3 招）；headless bot 模拟 100 局给 `difficultyScore`，超出区间自动缩放。
 - **里程碑 1（2:00）**：本地能从一句话生成 Boss 并打完一局。
 
 ### H2 · 2:00–3:15 — 召唤仪式 + 声音 + 美术资产
 - A：**Incantation 场景**：输入框（若麦克风可用则加按住说话，Gradium STT 直连）；提交后进入法阵：四张 Forge 卡（FORM / TEMPER / VOICE / ARENA）随后端返回字段依次翻开；Boss 剪影按部件拼装；TTS intro 到达即播放 + 音乐淡入。延迟用仪式动画遮盖，进度条 = 4 个并行任务。
-- B：Voice Design（Gemini 写 design prompt → Gradium 造声 → TTS 合成 intro / phase / taunt×3 / playerDeath×2 / defeat → 存 KV/R2 → 返 URL → 删临时 voice 释放槽位）。Nano Banana 2 生天空盒（equirect，比例不支持就 1:1 远景板）+ 立绘。音乐适配器出 P1/P2 两段。
+- B：Voice Design（Gemini 写 design prompt → Gradium 造声 → TTS 合成 intro / phase / taunt×3 / playerDeath×2 / defeat → 存 KV/R2 → 返 URL → 删临时 voice 释放槽位）。Nano Banana 2 按 `art.styleAnchor` 生天空盒（equirect，比例不支持就 1:1 远景板）+ 立绘 + 2 张冲击帧 + 面孔贴图（黑底精灵图）。音乐适配器出 P1/P2 两段。
 - C：`/forge` 契约测试；兜底资产管线脚本 `bake:fallback`。
 - **里程碑 2（3:15）**：说一句话 → 有声音有音乐有天空的 Boss 出现并开打。上传 itch。
 
@@ -85,11 +85,15 @@ interface NemesisSpec {
   }>;
   weakness: { trigger: "after_blink"|"after_charge"|"heavy_hit"|"parry"; multiplier: number };
   arena: { theme: string; skyPrompt: string; skyUrl?: string };
+  art: {
+    styleAnchor: string;          // 所有 Nano Banana 图共用的风格锚句，保证同一 Boss 的图风格一致
+    accentHex: string;
+    portraitUrl?: string; impactFrameUrls?: string[]; faceTextureUrl?: string; splatterSheetUrl?: string;
+  };
   voice: { designPrompt: string; voiceId?: string;
            lines: { intro: string; phase: string; taunt: string[]; playerDeath: string[]; defeat: string };
            audio?: Record<string, string> };
   music: { p1Prompt: string; p2Prompt: string; bpm: number; p1Url?: string; p2Url?: string };
-  portraitUrl?: string;
   grudges: Array<{ observation: string; patch: string }>;   // 学习历史，展示用
 }
 type Move = {
@@ -97,6 +101,26 @@ type Move = {
   telegraphMs: number; damage: number; scale?: number; count?: number; followUp?: Move["type"];
 };
 ```
+
+## 3b. 技术栈决策
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 构建 | **Vite + TypeScript**（不用 Next.js） | itch.io 只吃静态 HTML + 相对路径，`base: './'` 一行搞定；无 SSR 需求，后端全在 Worker；Next 的 static export 相对路径别扭且 hydration 抢首帧 |
+| UI 层 | **DOM + CSS**（不用 React） | 一个 `#hud` div 叠在 canvas 上：法阵、Forge 卡、GRUDGE 卡、血条、字幕；CSS 动画 / blur / mix-blend-mode 白送 |
+| 3D | **three.js r18x，WebGL2** | 熟悉、toon 材质 / InstancedMesh / decal 现成；不开 WebGPU（iframe 兼容风险）；描边用反面法线外扩，避免全屏 pass |
+| 部署 | Cloudflare Pages（`dist/`）+ wrangler 独立部署 Worker | 两条流水线互不干扰 |
+
+### 3D + 2D 混合：3D 负责"能打"，2D 负责"好看"
+3D 只做低模 cel-shaded 玩家 / Boss / 平台；质感全部来自 2D 图层（按性价比排序）：
+1. **DOM/CSS 层**：法阵 UI、四张 Forge 卡翻牌、撕纸 GRUDGE 卡、手写体 Boss 名、YOU DIED、二阶段宽银幕黑边。
+2. **Nano Banana 全屏背景**：equirect 天空盒或大幅远景板（虚空 + 元素色），占屏 60%，直接决定质感。
+3. **Impact Frame（漫画冲击帧）**：重击命中 / 阶段切换时插 2–3 帧全屏高对比 2D 插画（`impactFrameUrls`，每 Boss 生 2 张），停 80ms 回 3D。
+4. **Boss 立绘登场**：intro 台词时立绘侧滑入 + 字幕，3D 模型同时溶解出现；结算卡复用同一张。
+5. **2D 精灵进 3D**：墨迹飞溅 / 命中火花 / 符文用生成的精灵图做 billboard 粒子和 decal；生成时要求纯黑背景，shader 里 luma key 抠图。
+6. **Boss 面孔 / 纹样贴图**：程序化部件出剪影，Nano Banana 出"脸"（`faceTextureUrl`），每个 Boss 一眼不同而不碰 3D 生成。
+
+规则：所有图共用 `art.styleAnchor`（如 "ink wash + neon rim light, black void, single accent color {accentHex}"），由 Gemini 在出 spec 时一并生成；天空盒 / 立绘 / 冲击帧 / 贴图 prompt 全部拼接该句。
+不做：Boss 本体 2D 纸片（动画与判定复杂）；2D 侧视关卡仍留 Could。
 
 ## 4. 视觉方向
 | 维度 | Nemesis |
@@ -112,7 +136,7 @@ type Move = {
 
 ## 5. 合作方技术使用点（README 用）
 - **Gemini 3.8 Flash**：incantation → spec、GRUDGE 补丁、Voice Design 描述、音乐 prompt
-- **Nano Banana 2**：天空盒、立绘、分享卡
+- **Nano Banana 2**：天空盒、立绘、冲击帧、面孔贴图、墨迹精灵图、分享卡（统一 `styleAnchor`）
 - **Lyria 3 Clip** 或 ElevenLabs Music（0:45 决定）：P1/P2 循环
 - **Gradium**：Voice Design + TTS（Boss 嗓音）；STT（语音咒语输入，若 iframe 允许）
 - **Devin / Codex**：轨道 B、C 全部由 agent 执行，README 附 session 链接
@@ -122,7 +146,7 @@ type Move = {
 1. Rift: Beat
 2. 语音输入（STT）
 3. 弹反
-4. Nano Banana 立绘（保留天空盒）
+4. Nano Banana 面孔贴图 → 冲击帧 → 立绘（保留天空盒）
 5. 血脉 KV 计数（保留纯 URL 分享）
 6. 兜底 Boss 3 → 2
 7. GRUDGE 从 Gemini 补丁降级为**规则补丁**（本地统计翻滚方向 → 直接加对应招，仍有效果，零 API）

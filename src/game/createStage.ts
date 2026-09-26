@@ -6,6 +6,7 @@ import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
+import { Locomotion } from "./locomotion";
 import type { NemesisSpec } from "../spec";
 import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
@@ -66,12 +67,12 @@ export interface Stage {
 }
 
 const BOSS_HEIGHTS: Record<NemesisSpec["identity"]["silhouette"], number> = {
-  colossus: 4.5,
-  hound: 2.1,
-  seraph: 3.7,
-  serpent: 3.4,
-  knight: 3.5,
-  swarm: 3.2,
+  colossus: 4.25,
+  hound: 2.15,
+  seraph: 3.8,
+  serpent: 3.25,
+  knight: 3.6,
+  swarm: 2.8,
 };
 
 interface ToonMaterialState {
@@ -196,25 +197,34 @@ function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number): Bos
 }
 
 /**
- * Procedural boss rig: the GLBs are flat lists of named meshes, so we gather the striking limb and the head
- * into pivot groups and swing those from the sim's telegraph/active/recover windows.
+ * Procedural boss rig: the authored GLBs expose `rig_strike` / `rig_head` joints that the idle/move clips
+ * animate. Each frame we restore those joints to rest, let the mixer write the authored pose, then add the
+ * sim-driven telegraph/active/recover offsets on top so the two never fight. Assets without joints fall back
+ * to gathering meshes by name into pivot groups.
  */
+interface JointRest {
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  scale: THREE.Vector3;
+}
+
 interface BossRig {
-  strike: THREE.Group | null;
-  head: THREE.Group | null;
+  strike: THREE.Object3D | null;
+  head: THREE.Object3D | null;
   kind: "arm" | "head" | "burst";
+  rest: Map<THREE.Object3D, JointRest>;
 }
 
 const RIG_RULES: Record<NemesisSpec["identity"]["silhouette"], { strike: RegExp; head: RegExp | null; kind: BossRig["kind"] }> = {
   knight: { strike: /sword|pommel|crossguard|grip|gauntlet|forearm|upper arm/, head: /helm|visor|horn/, kind: "arm" },
   colossus: { strike: /arm|gauntlet|fist|finger|shoulder shard|shoulder mantle/, head: /skull|crown horn|eye/, kind: "arm" },
   seraph: { strike: /sword wing|wing blade|armoured arm|gauntlet/, head: /mask|eye|cheek/, kind: "arm" },
-  hound: { strike: /skull|jaw|canine|tooth|maw|amber eye|neck/, head: null, kind: "head" },
+  hound: { strike: /skull|jaw|canine|tooth|maw|amber eye|neck(?! spine)/, head: null, kind: "head" },
   serpent: { strike: /skull|fang|hood|jaw|ember eye|neck/, head: null, kind: "head" },
   swarm: { strike: /shard|splinter/, head: /heart|core/, kind: "burst" },
 };
 
-const EMPTY_RIG: BossRig = { strike: null, head: null, kind: "arm" };
+const EMPTY_RIG: BossRig = { strike: null, head: null, kind: "arm", rest: new Map() };
 
 function gatherPivot(visual: THREE.Object3D, pattern: RegExp, anchor: "top" | "bottom" | "centre"): THREE.Group | null {
   const meshes: THREE.Mesh[] = [];
@@ -242,9 +252,22 @@ function gatherPivot(visual: THREE.Object3D, pattern: RegExp, anchor: "top" | "b
 
 function buildBossRig(visual: THREE.Object3D, silhouette: NemesisSpec["identity"]["silhouette"]): BossRig {
   const rule = RIG_RULES[silhouette];
-  const strike = gatherPivot(visual, rule.strike, rule.kind === "arm" ? "top" : rule.kind === "head" ? "bottom" : "centre");
-  const head = rule.head ? gatherPivot(visual, rule.head, "bottom") : null;
-  return { strike, head, kind: rule.kind };
+  const authored = visual.getObjectByName("rig_strike") ?? null;
+  const strike = authored ?? gatherPivot(visual, rule.strike, rule.kind === "arm" ? "top" : rule.kind === "head" ? "bottom" : "centre");
+  const head = authored ? (visual.getObjectByName("rig_head") ?? null) : rule.head ? gatherPivot(visual, rule.head, "bottom") : null;
+  const rest = new Map<THREE.Object3D, JointRest>();
+  for (const joint of [strike, head]) {
+    if (joint) rest.set(joint, { position: joint.position.clone(), quaternion: joint.quaternion.clone(), scale: joint.scale.clone() });
+  }
+  return { strike, head, kind: rule.kind, rest };
+}
+
+function resetRig(rig: BossRig): void {
+  for (const [joint, rest] of rig.rest) {
+    joint.position.copy(rest.position);
+    joint.quaternion.copy(rest.quaternion);
+    joint.scale.copy(rest.scale);
+  }
 }
 
 function makeSlashArc(): THREE.Mesh {
@@ -632,11 +655,12 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let elapsed = 0;
   let currentSpec: NemesisSpec | null = null;
   let library: AssetLibrary | null = null;
-  let playerMixer: THREE.AnimationMixer | null = null;
-  let bossMixer: THREE.AnimationMixer | null = null;
+  let playerMotion: Locomotion | null = null;
+  let bossMotion: Locomotion | null = null;
   let playerMaterials: ToonMaterialState[] = [];
   let bossMaterials: ToonMaterialState[] = [];
   let playerSpeed = 0;
+  let bossSpeed = 0;
   let bossSpawn = 1;
   let attractAngle = 0;
   let first = true;
@@ -646,6 +670,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const toBoss = new THREE.Vector3();
   const desired = new THREE.Vector3();
   const lastPlayerPosition = new THREE.Vector3();
+  const lastBossPosition = new THREE.Vector3();
   const pose: PlayerPose = { ...REST_POSE };
   const bossPoseNow: BossPose = { ...BOSS_REST };
   let bossRig: BossRig = EMPTY_RIG;
@@ -737,21 +762,20 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
   const installPlayer = () => {
     if (!library) return;
-    playerMixer?.stopAllAction();
+    playerMotion?.stop();
     disposeGroup(playerVisualPivot);
     const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
     playerVisualPivot.add(visual);
     bladePivot = createBlade();
     playerVisualPivot.add(bladePivot);
     playerMaterials = collectToonMaterials(visual, true);
-    playerMixer = new THREE.AnimationMixer(visual);
-    const clip = library.player.animations[0];
-    if (clip) playerMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+    playerMotion = new Locomotion(visual, library.player.animations, { referenceSpeed: PLAYER.speed, cycleSeconds: 0.72 });
   };
 
   const installBoss = (spec: NemesisSpec, keepSpawn = false) => {
     const spawnBefore = bossSpawn;
-    bossMixer?.stopAllAction();
+    bossMotion?.stop();
+    bossMotion = null;
     disposeGroup(bossVisualPivot);
     bossMaterials = [];
     const asset = library?.bosses[spec.identity.silhouette];
@@ -760,9 +784,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       bossVisualPivot.add(visual);
       bossRig = buildBossRig(visual, spec.identity.silhouette);
       bossMaterials = collectToonMaterials(visual);
-      bossMixer = new THREE.AnimationMixer(visual);
-      const clip = asset.animations[0];
-      if (clip) bossMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+      bossMotion = new Locomotion(visual, asset.animations, { referenceSpeed: BOSS.walkSpeed, cycleSeconds: 1.3, idleTimeScale: 0.85 });
     } else {
       bossRig = EMPTY_RIG;
       const [, accentHex, deepHex] = spec.identity.palette;
@@ -967,6 +989,12 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
     playerSpeed = step > 0 ? Math.hypot(player.position.x - lastPlayerPosition.x, player.position.z - lastPlayerPosition.z) / step : 0;
     lastPlayerPosition.copy(player.position);
+    bossSpeed = step > 0 ? Math.hypot(boss.position.x - lastBossPosition.x, boss.position.z - lastBossPosition.z) / step : 0;
+    lastBossPosition.copy(boss.position);
+    const motionStep = step * (reducedMotion.matches ? 0 : 1);
+    playerMotion?.update(motionStep, p.action === "idle" ? playerSpeed : 0);
+    resetRig(bossRig);
+    bossMotion?.update(motionStep, bossSpeed);
 
     if (p.action === "light") attackPose(pose, p.actionT, PLAYER.light, LIGHT_WINDUP, LIGHT_STRIKE);
     else if (p.action === "heavy") attackPose(pose, p.actionT, PLAYER.heavy, HEAVY_WINDUP, HEAVY_STRIKE);
@@ -1028,18 +1056,18 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     bossVisualPivot.position.y = -2.1 * (1 - reveal) + bossPoseNow.rise + (b.invulnerableT > 0 ? Math.sin(state.timeMs / 90) * 0.15 + 0.4 : 0);
     if (bossRig.strike) {
       if (bossRig.kind === "burst") {
-        bossRig.strike.scale.setScalar(1 + bossPoseNow.headTilt * 0.9);
-        bossRig.strike.rotation.y = state.timeMs / 900 + bossPoseNow.headTilt * 1.5;
+        bossRig.strike.scale.multiplyScalar(1 + bossPoseNow.headTilt * 0.9);
+        bossRig.strike.rotation.y += state.timeMs / 900 + bossPoseNow.headTilt * 1.5;
       } else if (bossRig.kind === "head") {
-        bossRig.strike.rotation.x = bossPoseNow.headTilt * 1.2;
-        bossRig.strike.position.z = Math.max(0, bossPoseNow.headTilt) * 0.8;
+        bossRig.strike.rotation.x += bossPoseNow.headTilt * 1.2;
+        bossRig.strike.position.z += Math.max(0, bossPoseNow.headTilt) * 0.8;
       } else {
-        bossRig.strike.rotation.x = bossPoseNow.swing;
+        bossRig.strike.rotation.x += bossPoseNow.swing;
       }
     }
     if (bossRig.head) {
-      bossRig.head.rotation.x = bossPoseNow.headTilt * 0.5;
-      if (bossRig.kind === "burst") bossRig.head.scale.setScalar(1 + bossPoseNow.glow * 0.25);
+      bossRig.head.rotation.x += bossPoseNow.headTilt * 0.5;
+      if (bossRig.kind === "burst") bossRig.head.scale.multiplyScalar(1 + bossPoseNow.glow * 0.25);
     }
 
     for (const entry of playerMaterials) {
@@ -1132,10 +1160,6 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     fill.position.copy(camera.position).add(new THREE.Vector3(0, 4, 0)).addScaledVector(right, -2.5);
     fill.target.position.copy(player.position).setY(1);
 
-    playerMixer?.update(step * (reducedMotion.matches ? 0 : 1));
-    bossMixer?.update(step * (reducedMotion.matches ? 0 : 1));
-    if (playerMixer) playerMixer.timeScale = playerSpeed > 0.1 ? 1.45 : 0.78;
-
     const positions = emberGeometry.getAttribute("position") as THREE.BufferAttribute;
     if (!reducedMotion.matches) {
       for (let i = 0; i < positions.count; i += 1) {
@@ -1197,8 +1221,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       disposed = true;
       skyRequest += 1;
       window.removeEventListener("resize", resize);
-      playerMixer?.stopAllAction();
-      bossMixer?.stopAllAction();
+      playerMotion?.stop();
+      bossMotion?.stop();
       disposeGroup(arenaRoot);
       disposeGroup(player);
       disposeGroup(boss);

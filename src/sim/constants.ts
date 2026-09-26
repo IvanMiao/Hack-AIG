@@ -72,12 +72,17 @@ export const MOVE = {
 export const FLAT = {
   /** per-tick decay of z toward the lane, so the collapse takes ~0.4 s instead of snapping */
   laneSnap: 0.86,
-  jumpVelocity: 9.5,
-  gravity: 26,
+  jumpVelocity: 10,
+  gravity: 22,
   /** ground hazards (sweep, thrust, nova, ring, zone, charge) miss a player whose feet are above this */
   groundHazardHeight: 1.1,
-  /** volley shots stream in from behind the boss on two lanes: low ones are jumped, high ones are ducked under by staying down */
-  volley: { lowY: 0.5, highY: 2.0, gap: 4.5 },
+  /** volley shots stream in from behind the boss on two lanes: low ones are jumped, high ones are ducked under by staying down.
+   *  gap / (volley.speed * speedScale) must exceed one full jump (~0.9 s) so a low-low pair can be jumped twice. */
+  volley: { lowY: 0.5, highY: 2.0, gap: 7.5, speedScale: 0.7 },
+  /** ring waves are spaced out so each one is its own jump */
+  ringWaveGapScale: 2.2,
+  /** zones tile the lane with a standing pocket between them and arm late enough to walk out of */
+  zone: { pocket: 2.6, armMs: 650 },
   /** landing on the boss from above counts as a light hit and bounces the player back up */
   stomp: { minY: 0.9, maxY: 2.6, bounce: 0.75 },
 } as const;

@@ -81,13 +81,15 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
       return input;
     }
 
-    // Volley telegraphed and cover nearby: duck behind the pillar instead of gambling on a sidestep.
-    if (current?.phase === "telegraph" && current.move.type === "volley") {
+    // Volley telegraphed (or bolts still flying) and cover within reach: duck behind the pillar and hold
+    // there until the fan has passed, instead of gambling on a sidestep.
+    const volleyIncoming = (current?.phase === "telegraph" && current.move.type === "volley") || s.projectiles.length > 0;
+    if (volleyIncoming) {
       let best: { pos: PlayerInput["move"]; d: number } | null = null;
       for (const o of s.arena.obstacles) {
         const spot = add(o.pos, norm(sub(o.pos, b.pos)), o.radius + PLAYER.radius + 0.35);
         const far = dist(spot, p.pos);
-        if (far < 7 && (!best || far < best.d)) best = { pos: spot, d: far };
+        if (far < 4 && (!best || far < best.d)) best = { pos: spot, d: far };
       }
       if (best) {
         if (best.d > 0.25) input.move = norm(sub(best.pos, p.pos));

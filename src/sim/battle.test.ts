@@ -277,6 +277,16 @@ describe("pillars", () => {
   });
 });
 
+describe("bound roster", () => {
+  it("every fallback boss sits in the difficulty band under the arena rules", () => {
+    for (const bound of FALLBACK_SPECS) {
+      const report = measureDifficulty(bound, 32, AVERAGE_BOT);
+      expect(report.bossWinRate, bound.code).toBeGreaterThanOrEqual(DIFFICULTY_BAND.min - 0.05);
+      expect(report.bossWinRate, bound.code).toBeLessThanOrEqual(DIFFICULTY_BAND.max + 0.05);
+    }
+  });
+});
+
 describe("arena mutators", () => {
   const withElement = (element: Element): NemesisSpec => {
     const s = structuredClone(spec);

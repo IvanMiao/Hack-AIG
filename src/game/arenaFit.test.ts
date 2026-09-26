@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { ARENA_FLOOR_RADIUS, ARENA_RADIUS, BOSS, BOSS_EDGE_MARGIN, PLAYER_EDGE_MARGIN } from "../sim/constants";
 import { SILHOUETTES } from "../spec/types";
+import { createCodexBoss } from "./codexBoss";
 import { BOSS_MELEE_STRIKE } from "./createStage";
+import { createHFHero } from "./hfHero";
 
 type Mat4 = number[];
 interface GltfNode { name?: string; mesh?: number; children?: number[]; matrix?: Mat4; translation?: number[]; rotation?: number[]; scale?: number[] }
@@ -72,6 +75,22 @@ function groundRadii(file: string): Map<string, number[]> {
 
 const maxRadius = (radii: Map<string, number[]>) => Math.max(...[...radii.values()].map((list) => Math.max(...list)));
 
+/** Ground-plane radius of a procedural (three.js-built) figure in its rest pose. */
+function proceduralRadius(root: THREE.Object3D): number {
+  root.updateMatrixWorld(true);
+  let max = 0;
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const position = (object.geometry as THREE.BufferGeometry).getAttribute("position");
+    const point = new THREE.Vector3();
+    for (let i = 0; i < position.count; i += 1) {
+      point.fromBufferAttribute(position, i).applyMatrix4(object.matrixWorld);
+      max = Math.max(max, Math.hypot(point.x, point.z));
+    }
+  });
+  return max;
+}
+
 describe("arena floor vs. fighter clamps", () => {
   const floor = groundRadii("../assets/models/arena.glb").get("Arena carved walkable stone")!;
   const outerRing = Math.max(...floor);
@@ -84,9 +103,10 @@ describe("arena floor vs. fighter clamps", () => {
     expect(ARENA_FLOOR_RADIUS).toBeGreaterThan(ARENA_RADIUS);
   });
 
-  it("player model stays on the stone at the clamp", () => {
+  it("player and HF hero stay on the stone at the clamp", () => {
     const player = maxRadius(groundRadii("../assets/models/player.glb"));
     expect(ARENA_RADIUS - PLAYER_EDGE_MARGIN + player).toBeLessThanOrEqual(floorEdge);
+    expect(ARENA_RADIUS - PLAYER_EDGE_MARGIN + proceduralRadius(createHFHero().root)).toBeLessThanOrEqual(floorEdge);
   });
 
   it("every boss body, at full strike lunge, stays on the stone at the clamp", () => {
@@ -96,5 +116,7 @@ describe("arena floor vs. fighter clamps", () => {
       const overhang = (body + BOSS_MELEE_STRIKE.lunge) * BOSS_MELEE_STRIKE.stretch;
       expect(bossLimit + overhang, silhouette).toBeLessThanOrEqual(floorEdge);
     }
+    const codex = proceduralRadius(createCodexBoss().root);
+    expect(bossLimit + (codex + BOSS_MELEE_STRIKE.lunge) * BOSS_MELEE_STRIKE.stretch, "codex").toBeLessThanOrEqual(floorEdge);
   });
 });

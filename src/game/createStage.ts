@@ -6,6 +6,8 @@ import { createHFHero, type HFHero } from "./hfHero";
 import { createCodexBoss, type CodexBoss } from "./codexBoss";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
+import { createPillars } from "./fx/pillars";
+import { createRimCollapse } from "./fx/rimCollapse";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
 import { isCodexBout, type NemesisSpec } from "../spec";
@@ -395,6 +397,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const hot = new THREE.Color(palette.hot);
   const post = createPostFX(renderer, scene, camera, tuning.post);
   const particles = createParticles(camera, accent);
+  const rimCollapse = createRimCollapse(particles);
+  const pillars = createPillars(particles, accent);
+  scene.add(rimCollapse.object, pillars.object);
   scene.add(particles.object);
   const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
   const prepareSkyTexture = (texture: THREE.Texture) => {
@@ -544,18 +549,21 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const edgeFadeMaterial = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    uniforms: { fogTint: { value: new THREE.Color(0x05040a) } },
+    uniforms: { fogTint: { value: new THREE.Color(0x05040a) }, cut: { value: 2 } },
     vertexShader: `
       varying vec2 vUv;
       void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
     `,
     fragmentShader: `
       uniform vec3 fogTint;
+      uniform float cut;
       varying vec2 vUv;
       void main() {
         float r = length(vUv - 0.5) * 2.0;
         float fade = smoothstep(0.62, 1.0, r);
-        gl_FragColor = vec4(pow(fogTint, vec3(1.7)), fade * 0.92);
+        // cut is where the collapsed rim ends: everything past it has fallen into the void.
+        float swallowed = smoothstep(cut - 0.04, cut + 0.015, r);
+        gl_FragColor = vec4(pow(fogTint, vec3(1.7)), max(fade * 0.92, swallowed * 0.98));
       }
     `,
   });
@@ -961,6 +969,18 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
           particles.burst(burstAt, { count: 160, color: accent, color2: hot, speed: 9, spread: 1, lifeMs: 1400, size: 0.14, gravity: -1.5, drag: 1.4 });
         }
       }
+      if (event.type === "arenaShrink") {
+        shake = Math.max(shake, 0.5);
+        rimCollapse.collapse(event.from, event.to, event.ms);
+      }
+      if (event.type === "arenaPulse" && fxOn) {
+        burstAt.set(event.at.x, 0.3, event.at.z);
+        if (event.mutator === "ember") particles.burst(burstAt, { count: 40, color: 0xff6a2b, color2: 0x3a0a02, speed: 3.5, spread: 0.6, dir: UP, lifeMs: 900, size: 0.16, gravity: -2, drag: 1.2 });
+        else if (event.mutator === "tempest") particles.burst(burstAt, { count: 30, color: 0xcfe9ff, color2: accent, speed: 6, spread: 0.5, dir: UP, lifeMs: 500, size: 0.1, gravity: 4, drag: 2.5, stretch: 3 });
+        else particles.burst(burstAt, { count: 24, color: 0x8a0a1c, color2: 0x1a0205, speed: 2, spread: 1, lifeMs: 800, size: 0.2, gravity: 6, drag: 2 });
+      }
+      if (event.type === "obstaclesRaised") shake = Math.max(shake, 0.3);
+      if (event.type === "obstacleBroken") shake = Math.max(shake, 0.28);
       if (event.type === "bossStagger" && fxOn) {
         burstAt.copy(boss.position).setY(0.4);
         particles.burst(burstAt, { count: 40, color: 0x8a8578, color2: 0x1b1a1d, speed: 4, spread: 0.8, dir: UP, lifeMs: 800, size: 0.2, gravity: 8, drag: 1.5 });
@@ -1216,6 +1236,11 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     bossShadow.position.x = boss.position.x;
     bossShadow.position.z = boss.position.z;
     if (bossShadow.material instanceof THREE.MeshBasicMaterial) bossShadow.material.opacity = 0.45 + reveal * 0.35;
+    const rimScale = (state.arena.radius + (ARENA_FLOOR_RADIUS - ARENA_RADIUS)) / ARENA_FLOOR_RADIUS;
+    fracture.scale.setScalar(rimScale);
+    edgeFadeMaterial.uniforms.cut!.value = state.arena.radius < ARENA_RADIUS - 1e-3 ? rimScale / 1.25 : 2;
+    rimCollapse.update(reducedMotion.matches ? step * 3 : step);
+    pillars.sync(state, step, events);
     particles.ambient(fxOn && tuning.fx.ambient);
     particles.update(step);
     post.render(step);
@@ -1275,6 +1300,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (generatedSkyTexture) textures.add(generatedSkyTexture);
       for (const texture of textures) texture.dispose();
       if (library) disposeAssetLibrary(library);
+      rimCollapse.dispose();
+      pillars.dispose();
       particles.dispose();
       post.dispose();
       renderer.dispose();

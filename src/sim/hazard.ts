@@ -33,5 +33,5 @@ export function advanceHazard(h: Hazard, dtMs: number): Hazard {
     ? { ...h.shape, radius: h.shape.radius + (h.shape.growth * dtMs) / 1000 }
     : h.shape;
   const expired = shape.kind === "ring" && shape.radius > shape.maxRadius;
-  return { ...h, shape, ttl: expired ? 0 : Math.max(0, h.ttl - dtMs), cooldown: Math.max(0, h.cooldown - dtMs) };
+  return { ...h, shape, ttl: expired ? 0 : Math.max(0, h.ttl - dtMs), cooldown: Math.max(0, h.cooldown - dtMs), armT: Math.max(0, h.armT - dtMs) };
 }

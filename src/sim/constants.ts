@@ -4,6 +4,31 @@ export const ARENA_RADIUS = 27;
 export const ARENA_FLOOR_RADIUS = ARENA_RADIUS + 2;
 export const PLAYER_EDGE_MARGIN = 0.8;
 export const BOSS_EDGE_MARGIN = 1.6;
+/** `closing_ring` phase rule: each ringed phase multiplies the playable radius, eased over `shrinkMs`. */
+export const ARENA_SHRINK = {
+  factor: 0.7,
+  minRadius: ARENA_RADIUS * 0.5,
+  shrinkMs: 4000,
+} as const;
+/** Element mutators. Every arena hazard telegraphs for `armMs` before it can hurt; zone-style ones tick at MOVE.zone rates. */
+export const ARENA_MUTATOR = {
+  /** fire: vents of magma open at random spots (never under the player) and burn for a while */
+  ember: { periodMs: 6500, count: 3, radius: 2.2, armMs: 1200, ttlMs: 3600, damage: 12, safeRadius: 3.5, spread: 0.7 },
+  /** storm: a slow wind drags the player; lightning targets where they stand */
+  tempest: { windSpeed: 1.1, turnMs: 5000, boltPeriodMs: 7000, boltRadius: 2.4, boltArmMs: 1100, boltDamage: 14 },
+  /** blood: every wound leaves a pool that punishes standing in it */
+  bloodtide: { poolRadius: 1.6, armMs: 900, ttlMs: 6000, damage: 8 },
+} as const;
+/** `pillars` phase rule: breakable cover raised around the fighters. Only boss strikes chip them; projectiles are blocked. */
+export const ARENA_PILLARS = {
+  count: 4,
+  radius: 1.0,
+  hp: 2,
+  /** distance from the player/boss midpoint at which the ring of pillars rises */
+  ring: 5.5,
+  riseMs: 900,
+  damage: { charge: 2, sweep: 1, thrust: 1, nova: 1 },
+} as const;
 
 export const PLAYER = {
   maxHp: 100,

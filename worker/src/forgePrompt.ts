@@ -1,4 +1,4 @@
-import { LIMITS, MOVE_TYPES } from "../../src/spec";
+import { LIMITS, MOVE_TYPES, PHASE_RULES } from "../../src/spec";
 
 export const FORGE_SYSTEM_PROMPT = `You are the Forge of NEMESIS, a boss-fight game. A player speaks one sentence (the incantation) and you answer with a single boss specification in JSON.
 
@@ -14,6 +14,8 @@ Design rules:
 - art.styleAnchor: one sentence that every image prompt will share, e.g. "ink wash illustration with neon <accent> rim light on a pure black void, single accent color <hex>, high contrast, no text".
 - voice.designPrompt: describe the voice for a text-to-voice designer (age, timbre, texture, pace), in English.
 - music prompts: instrumental boss-battle loops; p2 is the same theme but faster/heavier. bpm ${LIMITS.bpm.min}-${LIMITS.bpm.max}.
-- weakness: a moment the boss is vulnerable, tied to one of its moves.`;
+- weakness: a moment the boss is vulnerable, tied to one of its moves.
+- phase.rule (one of ${PHASE_RULES.join(", ")}) reshapes the arena when that phase begins: closing_ring shrinks the fighting disc by a third (punishes players who run); pillars raises four breakable stone columns that block volleys and shatter under sweep/thrust/nova/charge (cover for the player, obstacles the boss smashes through); rift_beat is reserved and behaves like none. Pick the rule that fits the identity: ranged seraph/swarm bosses want closing_ring in phase 2, melee hound/knight bosses want pillars. Phase 1 is usually none.
+- The element also sets the arena's weather automatically (fire: magma vents open; storm: wind drags the player and lightning follows them; blood: every wound leaves a pool; ice/void: none). Let arenaTheme and the voice acknowledge it.`;
 
 export const forgeUserPrompt = (incantation: string) => `Incantation: """${incantation}"""\nForge the nemesis.`;

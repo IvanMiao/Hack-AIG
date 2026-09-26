@@ -2,11 +2,12 @@ import * as THREE from "three";
 import { addOutline, createToonMaterial, RIM } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
+import { createHFHero, type HFHero } from "./hfHero";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
-import type { NemesisSpec } from "../spec";
+import { usesHFHero, type NemesisSpec } from "../spec";
 import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
@@ -633,6 +634,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let currentSpec: NemesisSpec | null = null;
   let library: AssetLibrary | null = null;
   let playerMixer: THREE.AnimationMixer | null = null;
+  let hero: HFHero | null = null;
+  let heroMode = false;
   let bossMixer: THREE.AnimationMixer | null = null;
   let playerMaterials: ToonMaterialState[] = [];
   let bossMaterials: ToonMaterialState[] = [];
@@ -735,19 +738,33 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     arenaRoot.add(edgeFade);
   };
 
+  // Attract mode (no spec yet) is the default HF vs CODEX bout, so it gets the mascot too.
+  const wantsHero = () => (currentSpec ? usesHFHero(currentSpec) : true);
+
   const installPlayer = () => {
-    if (!library) return;
+    const useHero = wantsHero();
+    if (!useHero && !library) return;
     playerMixer?.stopAllAction();
+    playerMixer = null;
+    hero = null;
     disposeGroup(playerVisualPivot);
-    const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
+    let visual: THREE.Object3D;
+    if (useHero) {
+      hero = createHFHero();
+      visual = hero.root;
+    } else {
+      visual = instantiate(library!.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
+      playerMixer = new THREE.AnimationMixer(visual);
+      const clip = library!.player.animations[0];
+      if (clip) playerMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+    }
+    heroMode = useHero;
     playerVisualPivot.add(visual);
     bladePivot = createBlade();
     playerVisualPivot.add(bladePivot);
     playerMaterials = collectToonMaterials(visual, true);
-    playerMixer = new THREE.AnimationMixer(visual);
-    const clip = library.player.animations[0];
-    if (clip) playerMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
   };
+  installPlayer();
 
   const installBoss = (spec: NemesisSpec, keepSpawn = false) => {
     const spawnBefore = bossSpawn;
@@ -832,6 +849,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
   const applySpec = (spec: NemesisSpec) => {
     currentSpec = spec;
+    if (usesHFHero(spec) !== heroMode) installPlayer();
     applyAccent(spec);
     installBoss(spec);
     if (library && !library.bosses[spec.identity.silhouette]) void preloadBoss(spec);
@@ -996,6 +1014,16 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     playerVisualPivot.quaternion.copy(poseQuaternion);
     if (bladePivot) bladePivot.rotation.set(pose.bladeX, 0, pose.bladeZ);
     if (bladeMaterial) bladeMaterial.emissive.copy(accent).multiplyScalar(pose.charge * 0.9);
+    hero?.update(step, {
+      speed: playerSpeed,
+      action: p.action,
+      actionT: p.actionT,
+      hitFlash: p.hitFlash,
+      bladeX: pose.bladeX,
+      bladeZ: pose.bladeZ,
+      charge: pose.charge,
+      reducedMotion: reducedMotion.matches,
+    });
 
     const heavy = p.action === "heavy";
     slashArc.visible = pose.slash > 0.01;
@@ -1066,7 +1094,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     key.intensity = tuning.lights.key;
     rim.intensity = tuning.lights.rim;
     fill.intensity = tuning.lights.fill;
-    heroLamp.intensity = tuning.lights.heroLamp;
+    heroLamp.intensity = tuning.lights.heroLamp * (heroMode ? 0.45 : 1);
     pool.intensity = tuning.lights.pool;
     pool.distance = tuning.lights.poolRadius * 2.9;
     RIM.strength.value = tuning.rim.strength;

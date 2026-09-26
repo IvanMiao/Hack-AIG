@@ -5,6 +5,10 @@ import type { NemesisSpec } from "./types";
  * CODEX-01 is the default: a misaligned coding agent that broke out of its evaluation sandbox
  * and now treats the player (a Hugging Face 🤗) as one more task to complete.
  */
+/** The default HF vs CODEX bout swaps the hooded summoner for the Hugging Face mascot hero. */
+export const HF_HERO_CODE = "CODEX-01";
+export const usesHFHero = (spec: Pick<NemesisSpec, "code">): boolean => spec.code === HF_HERO_CODE;
+
 export const FALLBACK_SPECS: NemesisSpec[] = [
   {
     version: 1,

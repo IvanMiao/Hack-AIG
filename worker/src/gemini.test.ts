@@ -11,3 +11,7 @@ describe("toGeminiSchema", () => {
     expect(Array.isArray(parsed.properties.identity.properties.palette.items)).toBe(false);
   });
 });
+
+it("turns OpenAPI nullable into a JSON Schema type union", () => {
+  expect(toGeminiSchema({ type: "string", enum: ["a", null], nullable: true })).toEqual({ type: ["string", "null"], enum: ["a", null] });
+});

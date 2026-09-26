@@ -9,3 +9,4 @@ dist-itch
 .wrangler
 worker/worker-configuration.d.ts
 .DS_Store
+smoke-out

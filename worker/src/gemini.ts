@@ -14,6 +14,7 @@ export function toGeminiSchema(schema: unknown): unknown {
   for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
     if (key === "pattern" || key === "additionalProperties" || key === "$schema") continue;
     if (key === "items" && Array.isArray(value)) { out.items = toGeminiSchema(value[0]); continue; }
+    if (key === "nullable") { if (value === true) out.type = [out.type ?? (schema as { type?: string }).type, "null"]; continue; }
     out[key] = toGeminiSchema(value);
   }
   return out;
@@ -35,7 +36,7 @@ export async function generateStructured<T>(env: Env, request: StructuredRequest
       contents: [{ role: "user", parts: [{ text: request.user }] }],
       generationConfig: {
         temperature: request.temperature ?? 0.9,
-        responseFormat: { text: { mimeType: "application/json", schema: toGeminiSchema(request.schema) } },
+        responseFormat: { text: { mimeType: "APPLICATION_JSON", schema: toGeminiSchema(request.schema) } },
       },
     }),
   });

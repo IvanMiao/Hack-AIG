@@ -136,15 +136,28 @@ function startBattle(next: NemesisSpec) {
   if (!introSpoken) { introSpoken = true; audio.speak("intro"); }
 }
 
+/** Grudge for the current death, or null while /learn is still pending. Rendered whenever the death screen is (re)drawn. */
+let pendingGrudge: { observation: string; patch: string; gen: number } | null = null;
+
+function renderGrudge() {
+  if (pendingGrudge) {
+    grudgeObservation.textContent = pendingGrudge.observation;
+    grudgePatch.textContent = pendingGrudge.patch;
+    retryButton.textContent = `FACE IT AGAIN · GEN ${pendingGrudge.gen}`;
+  } else {
+    grudgeObservation.textContent = "It is studying how you died…";
+    grudgePatch.textContent = "";
+    retryButton.textContent = "FIGHT AGAIN";
+  }
+}
+
 function showOutcome(kind: "death" | "victory") {
   if (!spec) return;
   $("outcome-title").textContent = kind === "death" ? "YOU DIED" : "NEMESIS FELLED";
   $("outcome-line").textContent = kind === "death" ? `${spec.identity.name} will remember this.` : spec.voice.lines.defeat;
   if (kind === "death") {
     grudgeCard.classList.remove("hidden");
-    grudgeObservation.textContent = "It is studying how you died…";
-    grudgePatch.textContent = "";
-    retryButton.textContent = "FIGHT AGAIN";
+    renderGrudge();
   } else {
     grudgeCard.classList.add("hidden");
     retryButton.textContent = "FIGHT AGAIN";
@@ -188,13 +201,13 @@ function handleEvents(events: readonly BattleEvent[]) {
           const deadSpec = spec;
           const deadBattle = battle;
           const token = summonToken;
+          pendingGrudge = null;
           void learn(deadSpec, deadBattle.state.log).then((result) => {
             // Drop the grudge if the player already retried or started a new summon.
             if (token !== summonToken || battle !== deadBattle) return;
             spec = result.spec;
-            grudgeObservation.textContent = result.grudge.observation;
-            grudgePatch.textContent = result.grudge.patch;
-            retryButton.textContent = `FACE IT AGAIN · GEN ${result.spec.lineage.gen}`;
+            pendingGrudge = { ...result.grudge, gen: result.spec.lineage.gen };
+            renderGrudge();
           });
         }
         window.setTimeout(() => showOutcome("death"), 900);

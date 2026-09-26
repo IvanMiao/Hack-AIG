@@ -40,7 +40,7 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
     },
     boss: {
       pos: vec(0, -4), facing: vec(0, 1), hp: spec.stats.maxHp, poiseDamage: 0, phaseIndex: 0, current: null,
-      idleT: 0, idleFor: 900, staggerT: 0, invulnerableT: 0, weaknessT: 0, lastMoveType: null, hitFlash: 0,
+      idleT: 0, idleFor: BOSS.openingIdleMs, staggerT: 0, invulnerableT: 0, weaknessT: 0, lastMoveType: null, hitFlash: 0,
     },
     hazards: [],
     projectiles: [],
@@ -59,6 +59,20 @@ const currentPhase = (spec: NemesisSpec, boss: BossState): Phase => {
 };
 
 const isMelee = (type: MoveType) => type === "sweep" || type === "thrust" || type === "nova";
+
+/** Active/recover windows for a move type; ranged moves have no active window. */
+export function moveTiming(type: MoveType): { activeMs: number; recoverMs: number } {
+  switch (type) {
+    case "sweep": return MOVE.sweep;
+    case "thrust": return MOVE.thrust;
+    case "charge": return MOVE.charge;
+    case "nova": return MOVE.nova;
+    case "ring": return { activeMs: 0, recoverMs: MOVE.ring.recoverMs };
+    case "volley": return { activeMs: 0, recoverMs: MOVE.volley.recoverMs };
+    case "zone": return { activeMs: 0, recoverMs: MOVE.zone.recoverMs };
+    case "blink": return MOVE.blink;
+  }
+}
 
 export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const state = createInitialState(spec, seed);
@@ -194,6 +208,11 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
 
   const chooseMove = (phase: Phase): Move => {
     const b = state.boss;
+    if (b.lastMoveType === null) {
+      // Opening move: the gentlest option so the first exchange teaches rather than punishes.
+      const gentlest = [...phase.moves].sort((x, y) => x.damage - y.damage)[0];
+      if (gentlest) return gentlest;
+    }
     const near = dist(b.pos, state.player.pos) <= BOSS.meleeRange + 1.5;
     const candidates = phase.moves.filter((m) => m.type !== b.lastMoveType || phase.moves.length === 1);
     const preferred = candidates.filter((m) => (near ? isMelee(m.type) || m.type === "blink" : !isMelee(m.type)));
@@ -263,19 +282,6 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         if (spec.weakness.trigger === "after_blink") openWeakness(events);
         break;
       }
-    }
-  };
-
-  const moveTiming = (type: MoveType): { activeMs: number; recoverMs: number } => {
-    switch (type) {
-      case "sweep": return MOVE.sweep;
-      case "thrust": return MOVE.thrust;
-      case "charge": return MOVE.charge;
-      case "nova": return MOVE.nova;
-      case "ring": return { activeMs: 0, recoverMs: MOVE.ring.recoverMs };
-      case "volley": return { activeMs: 0, recoverMs: MOVE.volley.recoverMs };
-      case "zone": return { activeMs: 0, recoverMs: MOVE.zone.recoverMs };
-      case "blink": return MOVE.blink;
     }
   };
 

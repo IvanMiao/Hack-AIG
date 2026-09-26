@@ -1,106 +1,339 @@
 import * as THREE from "three";
-import { previewShape, type BattleState, type HazardShape } from "../sim";
+import { MOVE, previewShape, type BattleState, type HazardShape } from "../sim";
 
 const Y = 0.05;
+const CRACK_MS = 2000;
+const EDGE = 0.14;
 
-/** Draws telegraph decals, live hitboxes and projectiles from sim state. Meshes are pooled per frame. */
+// Kinds understood by the decal shader.
+const KIND_DISC = 0;
+const KIND_QUAD = 1;
+const KIND_RING = 2;
+
+const DECAL_VERTEX = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+/**
+ * Ground decal: crisp accent outline along the shape edge, a hollow interior that only glows near the rim,
+ * a shrinking ring (discs/arcs) or advancing front (lines) that shows the commit point, and a white flash
+ * when the hitbox goes live. Everything is computed from UVs so one material covers every shape.
+ */
+const DECAL_FRAGMENT = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  uniform float uProgress;
+  uniform float uFlash;
+  uniform float uPulse;
+  uniform int uKind;
+  uniform float uHalfAngle;
+  uniform vec2 uSize;
+  uniform float uEdge;
+  varying vec2 vUv;
+
+  void main() {
+    vec2 p = vUv - 0.5;
+    float edgeDist;
+    float sweep;
+    float bandWidth;
+    if (uKind == ${KIND_QUAD}) {
+      vec2 d = min(vUv, 1.0 - vUv) * uSize;
+      edgeDist = min(d.x, d.y);
+      sweep = vUv.x;
+      bandWidth = uEdge / uSize.x;
+    } else {
+      float r = length(p) * 2.0;
+      float outer = uSize.x;
+      edgeDist = (1.0 - r) * outer;
+      if (uKind == ${KIND_RING}) edgeDist = min(edgeDist, (r - uSize.y / outer) * outer);
+      if (uHalfAngle < 3.1) {
+        float a = atan(p.y, p.x);
+        edgeDist = min(edgeDist, (uHalfAngle - abs(a)) * max(r, 0.05) * outer);
+      }
+      sweep = 1.0 - r;
+      bandWidth = uEdge / outer;
+    }
+    if (edgeDist < 0.0) discard;
+
+    float outline = 1.0 - smoothstep(uEdge * 0.55, uEdge, edgeDist);
+    float rimGlow = (1.0 - smoothstep(0.0, uEdge * 5.0, edgeDist)) * 0.28;
+    float band = 0.0;
+    float fill = 0.0;
+    if (uProgress > 0.0 && uKind != ${KIND_RING}) {
+      float front = uProgress;
+      band = 1.0 - smoothstep(0.0, bandWidth * 1.4, abs(sweep - front));
+      fill = (1.0 - step(front, sweep)) * (0.08 + uProgress * 0.12);
+    }
+    float alpha = clamp(outline + rimGlow + band * 0.9 + fill + uPulse * 0.12, 0.0, 1.0);
+    alpha = mix(alpha, 1.0, uFlash * 0.75);
+    vec3 color = mix(uColor, vec3(1.0), clamp(uFlash + band * 0.45 + outline * 0.2, 0.0, 1.0));
+    gl_FragColor = vec4(color, alpha * uOpacity);
+  }
+`;
+
+function makeDecalMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: DECAL_VERTEX,
+    fragmentShader: DECAL_FRAGMENT,
+    uniforms: {
+      uColor: { value: new THREE.Color(0xff3b5c) },
+      uOpacity: { value: 1 },
+      uProgress: { value: 0 },
+      uFlash: { value: 0 },
+      uPulse: { value: 0 },
+      uKind: { value: KIND_DISC },
+      uHalfAngle: { value: Math.PI },
+      uSize: { value: new THREE.Vector2(1, 1) },
+      uEdge: { value: EDGE },
+    },
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+}
+
+/** Jagged radial cracks, white on transparent, used as an alpha map for landing decals. */
+function makeCrackTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const centre = size / 2;
+    context.strokeStyle = "#ffffff";
+    context.lineCap = "round";
+    let seed = 7;
+    const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    interface Ray { x: number; y: number; angle: number; length: number; width: number; depth: number }
+    const pending: Ray[] = [];
+    const rays = 9;
+    for (let i = 0; i < rays; i += 1) {
+      pending.push({ x: centre, y: centre, angle: (i / rays) * Math.PI * 2 + random() * 0.5, length: 70 + random() * 45, width: 3.2, depth: 1 });
+    }
+    while (pending.length) {
+      const ray = pending.pop()!;
+      let { x, y, angle } = ray;
+      const steps = 6;
+      context.lineWidth = ray.width;
+      context.beginPath();
+      context.moveTo(x, y);
+      for (let i = 0; i < steps; i += 1) {
+        angle += (random() - 0.5) * 0.9;
+        const segment = (ray.length / steps) * (0.7 + random() * 0.6);
+        x += Math.cos(angle) * segment;
+        y += Math.sin(angle) * segment;
+        context.lineTo(x, y);
+        if (ray.depth > 0 && random() < 0.45) {
+          pending.push({ x, y, angle: angle + (random() < 0.5 ? -0.9 : 0.9), length: ray.length * 0.4, width: ray.width * 0.6, depth: ray.depth - 1 });
+        }
+      }
+      context.stroke();
+    }
+    context.fillStyle = "#ffffff";
+    context.beginPath();
+    context.arc(centre, centre, 9, 0, Math.PI * 2);
+    context.fill();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.anisotropy = 4;
+  return texture;
+}
+
+interface Crack {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  age: number;
+}
+
+/** Draws telegraph decals, live hitboxes, landing cracks and projectiles from sim state. Meshes are pooled per frame. */
 export function createHazardView(scene: THREE.Scene) {
   const group = new THREE.Group();
   scene.add(group);
-  const pool: THREE.Mesh[] = [];
+  const pool: { mesh: THREE.Mesh; material: THREE.ShaderMaterial }[] = [];
   let used = 0;
-  const telegraphMat = new THREE.MeshBasicMaterial({ color: 0xff3b5c, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false });
-  const activeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false });
-  const zoneMat = new THREE.MeshBasicMaterial({ color: 0xff3b5c, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
-  const projectileMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const accent = new THREE.Color(0xff3b5c);
+  const projectileMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+  const projectileHalo = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+  const projectiles: THREE.Mesh[] = [];
+  let projectilesUsed = 0;
   const unit = {
-    disc: new THREE.CircleGeometry(1, 40),
-    ring: new THREE.RingGeometry(0.5, 1, 48),
+    disc: new THREE.CircleGeometry(1, 48),
+    ring: new THREE.RingGeometry(0.5, 1, 64),
     quad: new THREE.PlaneGeometry(1, 1),
-    sphere: new THREE.SphereGeometry(1, 10, 8),
+    sphere: new THREE.SphereGeometry(1, 12, 10),
   };
+  const crackTexture = makeCrackTexture();
+  const cracks: Crack[] = [];
+  const seenHazards = new Set<number>();
+  let lastTimeMs = 0;
 
-  const take = (geometry: THREE.BufferGeometry, material: THREE.Material): THREE.Mesh => {
-    let mesh = pool[used];
-    if (!mesh) { mesh = new THREE.Mesh(); pool.push(mesh); group.add(mesh); }
+  const take = (geometry: THREE.BufferGeometry): { mesh: THREE.Mesh; material: THREE.ShaderMaterial } => {
+    let entry = pool[used];
+    if (!entry) {
+      const material = makeDecalMaterial();
+      const mesh = new THREE.Mesh(unit.disc, material);
+      entry = { mesh, material };
+      pool.push(entry);
+      group.add(mesh);
+    }
     used += 1;
-    mesh.geometry = geometry;
-    mesh.material = material;
-    mesh.visible = true;
-    mesh.rotation.set(0, 0, 0);
-    mesh.scale.set(1, 1, 1);
-    return mesh;
+    entry.mesh.geometry = geometry;
+    entry.mesh.visible = true;
+    entry.mesh.rotation.set(-Math.PI / 2, 0, 0);
+    entry.mesh.scale.set(1, 1, 1);
+    entry.material.uniforms.uColor!.value = accent;
+    entry.material.uniforms.uHalfAngle!.value = Math.PI;
+    entry.material.uniforms.uEdge!.value = EDGE;
+    return entry;
   };
 
-  const place = (shape: HazardShape, material: THREE.Material) => {
+  const place = (shape: HazardShape, progress: number, flash: number, pulse: number, opacity: number) => {
+    let entry: { mesh: THREE.Mesh; material: THREE.ShaderMaterial };
     switch (shape.kind) {
       case "circle": {
-        const m = take(unit.disc, material);
-        m.position.set(shape.center.x, Y, shape.center.z);
-        m.rotation.x = -Math.PI / 2;
-        m.scale.setScalar(shape.radius);
+        entry = take(unit.disc);
+        entry.mesh.position.set(shape.center.x, Y, shape.center.z);
+        entry.mesh.scale.setScalar(shape.radius);
+        entry.material.uniforms.uKind!.value = KIND_DISC;
+        (entry.material.uniforms.uSize!.value as THREE.Vector2).set(shape.radius, shape.radius);
         break;
       }
       case "arc": {
-        const geometry = new THREE.CircleGeometry(1, 32, -shape.halfAngle, shape.halfAngle * 2);
-        const m = take(geometry, material);
-        m.position.set(shape.center.x, Y, shape.center.z);
-        m.rotation.x = -Math.PI / 2;
+        const geometry = new THREE.CircleGeometry(1, 40, -shape.halfAngle, shape.halfAngle * 2);
+        entry = take(geometry);
+        entry.mesh.position.set(shape.center.x, Y, shape.center.z);
         // CircleGeometry starts at +X; rotate so the arc centre points along dir (x, z) on the ground plane.
-        m.rotation.z = -Math.atan2(shape.dir.z, shape.dir.x);
-        m.scale.setScalar(shape.radius);
-        m.userData.disposable = geometry;
+        entry.mesh.rotation.z = -Math.atan2(shape.dir.z, shape.dir.x);
+        entry.mesh.scale.setScalar(shape.radius);
+        entry.mesh.userData.disposable = geometry;
+        entry.material.uniforms.uKind!.value = KIND_DISC;
+        entry.material.uniforms.uHalfAngle!.value = shape.halfAngle;
+        (entry.material.uniforms.uSize!.value as THREE.Vector2).set(shape.radius, shape.radius);
         break;
       }
       case "line": {
-        const m = take(unit.quad, material);
-        m.position.set(shape.start.x + (shape.dir.x * shape.length) / 2, Y, shape.start.z + (shape.dir.z * shape.length) / 2);
-        m.rotation.x = -Math.PI / 2;
-        m.rotation.z = -Math.atan2(shape.dir.z, shape.dir.x);
-        m.scale.set(shape.length, shape.halfWidth * 2, 1);
+        entry = take(unit.quad);
+        entry.mesh.position.set(shape.start.x + (shape.dir.x * shape.length) / 2, Y, shape.start.z + (shape.dir.z * shape.length) / 2);
+        entry.mesh.rotation.z = -Math.atan2(shape.dir.z, shape.dir.x);
+        entry.mesh.scale.set(shape.length, shape.halfWidth * 2, 1);
+        entry.material.uniforms.uKind!.value = KIND_QUAD;
+        (entry.material.uniforms.uSize!.value as THREE.Vector2).set(shape.length, shape.halfWidth * 2);
         break;
       }
       case "ring": {
-        const m = take(unit.ring, material);
-        m.position.set(shape.center.x, Y, shape.center.z);
-        m.rotation.x = -Math.PI / 2;
+        entry = take(unit.ring);
+        entry.mesh.position.set(shape.center.x, Y, shape.center.z);
         const outer = shape.radius + shape.thickness / 2;
         const inner = Math.max(0.01, shape.radius - shape.thickness / 2);
-        // unit ring spans 0.5..1; scale so outer=outer, and the inner edge lands roughly at inner.
-        m.scale.setScalar(outer);
-        m.scale.z = 1;
-        m.userData.inner = inner;
+        entry.mesh.scale.setScalar(outer);
+        entry.material.uniforms.uKind!.value = KIND_RING;
+        (entry.material.uniforms.uSize!.value as THREE.Vector2).set(outer, Math.max(inner, outer * 0.5));
+        entry.material.uniforms.uEdge!.value = Math.min(EDGE, shape.thickness * 0.3);
         break;
       }
     }
+    entry.material.uniforms.uProgress!.value = progress;
+    entry.material.uniforms.uFlash!.value = flash;
+    entry.material.uniforms.uPulse!.value = pulse;
+    entry.material.uniforms.uOpacity!.value = opacity;
+  };
+
+  const spawnCrack = (shape: HazardShape) => {
+    let crack = cracks.find((c) => !c.mesh.visible);
+    if (!crack) {
+      const material = new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: crackTexture, transparent: true, depthWrite: false, opacity: 0 });
+      const mesh = new THREE.Mesh(unit.disc, material);
+      mesh.rotation.x = -Math.PI / 2;
+      crack = { mesh, material, age: 0 };
+      cracks.push(crack);
+      group.add(mesh);
+    }
+    let x = 0;
+    let z = 0;
+    let radius = 1;
+    switch (shape.kind) {
+      case "circle": x = shape.center.x; z = shape.center.z; radius = shape.radius * 0.8; break;
+      case "arc": x = shape.center.x + shape.dir.x * shape.radius * 0.45; z = shape.center.z + shape.dir.z * shape.radius * 0.45; radius = shape.radius * 0.55; break;
+      case "line": x = shape.start.x + shape.dir.x * shape.length * 0.6; z = shape.start.z + shape.dir.z * shape.length * 0.6; radius = shape.halfWidth * 2.6; break;
+      case "ring": return;
+    }
+    crack.mesh.position.set(x, Y - 0.02, z);
+    crack.mesh.rotation.z = Math.random() * Math.PI * 2;
+    crack.mesh.scale.setScalar(radius);
+    crack.mesh.visible = true;
+    crack.age = 0;
+    crack.material.color.copy(accent).lerp(new THREE.Color(0x000000), 0.55);
   };
 
   const sync = (state: BattleState) => {
-    for (const mesh of pool) {
-      const disposable = mesh.userData.disposable as THREE.BufferGeometry | undefined;
-      if (disposable) { disposable.dispose(); delete mesh.userData.disposable; }
+    for (const entry of pool) {
+      const disposable = entry.mesh.userData.disposable as THREE.BufferGeometry | undefined;
+      if (disposable) { disposable.dispose(); delete entry.mesh.userData.disposable; }
     }
     used = 0;
+    projectilesUsed = 0;
+    const dtMs = state.timeMs >= lastTimeMs ? state.timeMs - lastTimeMs : 0;
+    lastTimeMs = state.timeMs;
+    if (state.timeMs < 50) seenHazards.clear();
+
     const current = state.boss.current;
     if (current?.phase === "telegraph") {
       const shape = previewShape(current, state.boss);
       if (shape) {
-        telegraphMat.opacity = 0.18 + 0.25 * (current.t / current.telegraphMs);
-        place(shape, telegraphMat);
+        const u = current.t / current.telegraphMs;
+        place(shape, u, 0, 0, 0.55 + 0.45 * u);
       }
     }
-    for (const h of state.hazards) place(h.shape, h.repeat ? zoneMat : activeMat);
-    for (const p of state.projectiles) {
-      const m = take(unit.sphere, projectileMat);
-      m.position.set(p.pos.x, 1.2, p.pos.z);
-      m.scale.setScalar(p.radius);
+    for (const h of state.hazards) {
+      if (!seenHazards.has(h.id)) {
+        seenHazards.add(h.id);
+        if (h.source !== "ring") spawnCrack(h.shape);
+      }
+      if (h.repeat) {
+        const pulse = 0.5 + 0.5 * Math.sin(state.timeMs / 140);
+        const settle = Math.min(1, (MOVE.zone.ttlMs - h.ttl) / 260);
+        place(h.shape, 0, 1 - settle, pulse, 0.9);
+      } else {
+        const life = Math.min(1, h.ttl / 220);
+        if (h.source === "ring") place(h.shape, 0, 0.35, 0.5 + 0.5 * Math.sin(state.timeMs / 60), 1);
+        else place(h.shape, 0, Math.min(1, life * 1.3), 0, 0.85 + 0.15 * life);
+      }
     }
-    for (let i = used; i < pool.length; i += 1) { const m = pool[i]; if (m) m.visible = false; }
+    for (const p of state.projectiles) {
+      let core = projectiles[projectilesUsed * 2];
+      let halo = projectiles[projectilesUsed * 2 + 1];
+      if (!core || !halo) {
+        core = new THREE.Mesh(unit.sphere, projectileMat);
+        halo = new THREE.Mesh(unit.sphere, projectileHalo);
+        projectiles.push(core, halo);
+        group.add(core, halo);
+      }
+      projectilesUsed += 1;
+      core.visible = halo.visible = true;
+      core.position.set(p.pos.x, 1.2, p.pos.z);
+      core.scale.setScalar(p.radius * 0.7);
+      halo.position.copy(core.position);
+      halo.scale.setScalar(p.radius * 1.5);
+    }
+    for (let i = projectilesUsed * 2; i < projectiles.length; i += 1) { const m = projectiles[i]; if (m) m.visible = false; }
+    for (let i = used; i < pool.length; i += 1) { const entry = pool[i]; if (entry) entry.mesh.visible = false; }
+
+    for (const crack of cracks) {
+      if (!crack.mesh.visible) continue;
+      crack.age += dtMs;
+      const u = crack.age / CRACK_MS;
+      if (u >= 1) { crack.mesh.visible = false; continue; }
+      crack.material.opacity = (1 - u * u) * 0.9;
+    }
   };
 
   const setAccent = (hex: string) => {
-    telegraphMat.color.set(hex);
-    zoneMat.color.set(hex);
+    accent.set(hex);
+    projectileHalo.color.copy(accent);
   };
 
   return { sync, setAccent };

@@ -1,4 +1,4 @@
-import type { Move, MoveType, NemesisSpec, Phase } from "../spec";
+import type { Move, MoveType, NemesisSpec, Phase, PhaseRule } from "../spec";
 import { ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
 import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
@@ -14,6 +14,8 @@ export interface BattleDebug {
   playerInvulnerable: boolean;
   /** Start `type` immediately (idle boss only). Returns false if the boss is busy or the move is not in any phase. */
   forceMove(type: MoveType, template?: Partial<Move>): boolean;
+  /** Apply an arena rule now, as if the current phase had just begun with it. */
+  forceRule(rule: PhaseRule): void;
 }
 
 export interface Battle {
@@ -586,6 +588,11 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       b.idleT = 0;
       pendingEvents.push(...events);
       return true;
+    },
+    forceRule(rule) {
+      const phase = spec.phases[state.boss.phaseIndex] ?? spec.phases[0];
+      if (!phase || state.outcome !== "fighting") return;
+      applyPhaseRule(state, { ...phase, rule }, pendingEvents);
     },
   };
 

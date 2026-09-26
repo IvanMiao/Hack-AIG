@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { buildAsset, isAssetKind, loadSpecByCode, readBlob } from "./assets";
 import { forgeNemesis } from "./forge";
 import { mintGradiumToken } from "./gradium";
 import { corsHeaders, error, json, readJson } from "./http";
@@ -23,6 +24,23 @@ export default {
         if (incantation.length < 4) return error(400, "incantation too short", cors);
         if (incantation.length > MAX_INCANTATION_CHARS) return error(400, "incantation too long", cors);
         return json(await forgeNemesis(env, incantation), {}, cors);
+      }
+
+      if (path === "/forge/asset" && request.method === "POST") {
+        const body = await readJson<{ code?: string; kind?: string }>(request);
+        const code = body?.code ?? "";
+        if (!/^[A-Za-z0-9-]{4,16}$/.test(code)) return error(400, "bad code", cors);
+        if (!isAssetKind(body?.kind)) return error(400, "kind must be sky|portrait|music|voice", cors);
+        const spec = await loadSpecByCode(env, code);
+        if (!spec) return error(404, "unknown nemesis", cors);
+        return json(await buildAsset(env, spec, body.kind), {}, cors);
+      }
+
+      const assetMatch = /^\/asset\/([A-Za-z0-9-]{4,16})\/([a-z0-9-]{1,32})$/.exec(path);
+      if (assetMatch && request.method === "GET") {
+        const blob = await readBlob(env, assetMatch[1] ?? "", assetMatch[2] ?? "");
+        if (!blob) return error(404, "no such asset", cors);
+        return new Response(blob.bytes, { headers: { ...cors, "content-type": blob.contentType, "cache-control": "public, max-age=604800, immutable" } });
       }
 
       if (path === "/learn" && request.method === "POST") {

@@ -55,3 +55,39 @@ button:disabled { opacity: 0.4; cursor: wait; }
 #outcome[data-kind="victory"] h2 { color: var(--bone); text-shadow: 0 0 40px var(--accent); }
 #outcome p { max-width: 60ch; text-align: center; opacity: 0.8; margin: 0 0 12px; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Summoning ritual: four Forge cards flip as Gemini's fields land, then glow as each partner asset arrives. */
+#ritual { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.35), rgba(0,0,0,0.9) 75%); }
+.ritual-incantation { margin: 0; max-width: 70ch; text-align: center; font-style: italic; opacity: 0.8; letter-spacing: 0.04em; }
+.cards { display: grid; grid-template-columns: repeat(4, minmax(150px, 210px)); gap: 14px; width: min(920px, 92vw); perspective: 1200px; }
+.card { position: relative; min-height: 250px; padding: 14px; border: 1px solid rgba(233,228,216,0.22); border-radius: 4px; overflow: hidden;
+  background: linear-gradient(180deg, rgba(14,16,26,0.92), rgba(6,7,12,0.96)); transform: rotateY(90deg); opacity: 0;
+  transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s, box-shadow 0.4s, border-color 0.4s; }
+.card::before { content: ""; position: absolute; inset: 0; background-image: var(--card-art, none); background-size: cover; background-position: center top;
+  opacity: 0; transition: opacity 1.2s; mask-image: linear-gradient(180deg, rgba(0,0,0,0.9), transparent 90%); -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.9), transparent 90%); }
+.card.revealed { transform: rotateY(0); opacity: 1; }
+.card.ready { border-color: var(--accent); box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 40%, transparent); }
+.card.ready::before { opacity: 0.55; }
+.card.failed { border-color: rgba(200, 16, 46, 0.5); }
+.card header { position: relative; display: flex; justify-content: space-between; align-items: baseline; }
+.card h3 { margin: 0; font-family: var(--font-display); letter-spacing: 0.3em; font-size: 13px; color: var(--accent); }
+.card-badge { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; opacity: 0.55; }
+.card.ready .card-badge { opacity: 1; color: var(--accent); }
+.card.failed .card-badge { color: #c8102e; opacity: 0.9; }
+.card:not(.ready) .card-badge { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
+.card-body { position: relative; display: flex; flex-direction: column; gap: 8px; margin-top: 14px; font-size: 13px; line-height: 1.35; }
+.card-body strong { font-family: var(--font-display); font-size: 18px; letter-spacing: 0.08em; text-shadow: 0 0 10px var(--accent); }
+.card-body em { opacity: 0.8; }
+.card-body q { font-style: italic; opacity: 0.9; }
+.card-body .whisper { opacity: 0.6; font-size: 12px; }
+.ritual-progress { width: min(920px, 92vw); height: 3px; background: rgba(233,228,216,0.12); }
+#ritual-progress-fill { height: 100%; width: 0; background: var(--accent); box-shadow: 0 0 10px var(--accent); transition: width 0.6s; }
+
+.portrait { position: absolute; right: -40vw; bottom: 0; height: min(78vh, 720px); pointer-events: none; opacity: 0;
+  filter: drop-shadow(0 0 30px color-mix(in srgb, var(--accent) 50%, transparent));
+  mask-image: linear-gradient(90deg, transparent, #000 25%); -webkit-mask-image: linear-gradient(90deg, transparent, #000 25%);
+  transition: right 0.9s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.9s; }
+.portrait.shown { right: 2vw; opacity: 0.92; }
+.portrait[src=""] { display: none; }

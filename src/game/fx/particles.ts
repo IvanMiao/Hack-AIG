@@ -67,7 +67,8 @@ export function createParticles(camera: THREE.Camera, ambientColor: THREE.Color)
   const v = new THREE.Vector3();
   const camQ = new THREE.Quaternion();
   const zAxis = new THREE.Vector3(0, 0, 1);
-  const quadToZ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+  const camInverse = new THREE.Quaternion();
+  const spin = new THREE.Quaternion();
   const tmpColor = new THREE.Color();
   const tmpColor2 = new THREE.Color();
 
@@ -123,7 +124,7 @@ export function createParticles(camera: THREE.Camera, ambientColor: THREE.Color)
     },
     update(dt) {
       if (ambientOn) {
-        ambientAcc += dt * 14;
+        ambientAcc += dt * 9;
         while (ambientAcc >= 1) {
           ambientAcc -= 1;
           const a = Math.random() * Math.PI * 2;
@@ -133,6 +134,7 @@ export function createParticles(camera: THREE.Camera, ambientColor: THREE.Color)
         }
       }
       camera.getWorldQuaternion(camQ);
+      camInverse.copy(camQ).invert();
       for (let i = 0; i < alive; ) {
         life[i] = life[i]! - dt;
         if (life[i]! <= 0) {
@@ -154,11 +156,12 @@ export function createParticles(camera: THREE.Camera, ambientColor: THREE.Color)
           v.set(vel[i * 3]!, vel[i * 3 + 1]!, vel[i * 3 + 2]!);
           const speed = v.length();
           if (speed > 1e-4) {
-            v.divideScalar(speed);
-            q.setFromUnitVectors(zAxis, v);
-            s.set(sz, sz, sz + speed * stretch[i]! * 0.06);
-            // Quad's long axis follows velocity (sparks read as streaks).
-            m.compose(p, q.multiply(quadToZ), s);
+            // Billboard spun about the view axis so the quad's long side follows the on-screen velocity (sparks read as streaks).
+            v.applyQuaternion(camInverse);
+            spin.setFromAxisAngle(zAxis, Math.atan2(v.y, v.x));
+            q.copy(camQ).multiply(spin);
+            s.set(sz + speed * stretch[i]! * 0.06, sz * 0.6, sz);
+            m.compose(p, q, s);
           } else m.compose(p, camQ, s.set(sz, sz, sz));
         } else m.compose(p, camQ, s.set(sz, sz, sz));
         mesh.setMatrixAt(i, m);

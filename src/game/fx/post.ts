@@ -23,12 +23,12 @@ export const DEFAULT_POST: PostSettings = {
   enabled: true,
   bloomStrength: 0.55,
   bloomRadius: 0.35,
-  bloomThreshold: 0.72,
+  bloomThreshold: 0.85,
   vignette: 0.42,
   grain: 0.045,
-  aberration: 0.0015,
+  aberration: 0.0006,
   saturation: 0.05,
-  exposure: 1.05,
+  exposure: 1.2,
 };
 
 const GRADE_FRAG = /* glsl */ `
@@ -95,24 +95,19 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(size.clone(), settings.bloomStrength, settings.bloomRadius, settings.bloomThreshold);
   composer.addPass(bloom);
-  const grade = new ShaderPass(
-    new THREE.ShaderMaterial({
-      uniforms: {
-        tDiffuse: { value: null },
-        uResolution: { value: size.clone() },
-        uTime: { value: 0 },
-        uVignette: { value: settings.vignette },
-        uGrain: { value: settings.grain },
-        uAberration: { value: settings.aberration },
-        uSaturation: { value: settings.saturation },
-        uPulse: { value: 0 },
-        uPulseColor: { value: new THREE.Color(0xff2d4f) },
-        uWhite: { value: 0 },
-      },
-      vertexShader: GRADE_VERT,
-      fragmentShader: GRADE_FRAG,
-    }),
-  );
+  const u = {
+    tDiffuse: { value: null as THREE.Texture | null },
+    uResolution: { value: size.clone() },
+    uTime: { value: 0 },
+    uVignette: { value: settings.vignette },
+    uGrain: { value: settings.grain },
+    uAberration: { value: settings.aberration },
+    uSaturation: { value: settings.saturation },
+    uPulse: { value: 0 },
+    uPulseColor: { value: new THREE.Color(0xff2d4f) },
+    uWhite: { value: 0 },
+  };
+  const grade = new ShaderPass(new THREE.ShaderMaterial({ uniforms: u, vertexShader: GRADE_VERT, fragmentShader: GRADE_FRAG }));
   composer.addPass(grade);
   composer.addPass(new OutputPass());
 
@@ -125,11 +120,11 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     setSize(width, height) {
       composer.setSize(width, height);
       bloom.setSize(width, height);
-      (grade.uniforms.uResolution.value as THREE.Vector2).set(width, height);
+      u.uResolution.value.set(width, height);
     },
     pulse(color, strength = 1) {
       pulse = Math.max(pulse, strength);
-      (grade.uniforms.uPulseColor.value as THREE.Color).set(color);
+      u.uPulseColor.value.set(color);
     },
     whiteFlash(strength = 0.6) {
       white = Math.max(white, strength);
@@ -146,13 +141,13 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
       bloom.strength = settings.bloomStrength;
       bloom.radius = settings.bloomRadius;
       bloom.threshold = settings.bloomThreshold;
-      grade.uniforms.uTime.value = time;
-      grade.uniforms.uVignette.value = settings.vignette;
-      grade.uniforms.uGrain.value = settings.grain;
-      grade.uniforms.uAberration.value = settings.aberration;
-      grade.uniforms.uSaturation.value = settings.saturation;
-      grade.uniforms.uPulse.value = pulse * pulse;
-      grade.uniforms.uWhite.value = white;
+      u.uTime.value = time;
+      u.uVignette.value = settings.vignette;
+      u.uGrain.value = settings.grain;
+      u.uAberration.value = settings.aberration;
+      u.uSaturation.value = settings.saturation;
+      u.uPulse.value = pulse * pulse;
+      u.uWhite.value = white;
       composer.render(dt);
     },
     dispose() {

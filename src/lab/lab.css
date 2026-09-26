@@ -1,0 +1,160 @@
+/* Lab overlay: dense, monospace, stays out of the way of the arena. lil-gui docks top-right. */
+body.lab {
+  cursor: default;
+}
+
+#lab-hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--font-body);
+  color: var(--bone);
+  z-index: 10;
+}
+
+.lab-bars {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  display: grid;
+  gap: 5px;
+  width: 260px;
+}
+
+.lab-bar {
+  position: relative;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.lab-bar i {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  background: #e9e4d8;
+  transition: transform 80ms linear;
+}
+.lab-bar.stamina i { background: #86c96a; }
+.lab-bar.boss i { background: var(--accent, #7fdcff); }
+.lab-bar.poise i { background: #ffd166; }
+
+.lab-bar span {
+  position: absolute;
+  right: 4px;
+  top: -1px;
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  color: rgba(0, 0, 0, 0.75);
+  mix-blend-mode: plus-lighter;
+}
+
+.lab-timeline {
+  position: absolute;
+  left: 16px;
+  top: 82px;
+  display: flex;
+  width: 260px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.4);
+}
+.lab-timeline .seg {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+}
+.lab-timeline .seg:last-of-type { border-right: 0; }
+.lab-timeline .seg i {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+}
+.lab-timeline .tele i { background: color-mix(in srgb, var(--accent, #7fdcff) 55%, transparent); }
+.lab-timeline .act i { background: #ff5a3c; }
+.lab-timeline .rec i { background: rgba(255, 255, 255, 0.28); }
+.lab-timeline .seg span {
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.7);
+}
+.lab-timeline b {
+  position: absolute;
+  right: 0;
+  top: 18px;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  color: var(--accent, #7fdcff);
+  text-transform: uppercase;
+}
+
+.lab-status {
+  position: absolute;
+  left: 16px;
+  top: 122px;
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: rgba(233, 228, 216, 0.82);
+  text-shadow: 0 1px 2px #000;
+}
+
+.lab-events {
+  position: absolute;
+  left: 16px;
+  bottom: 44px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgba(233, 228, 216, 0.6);
+}
+.lab-events li:last-child { color: var(--bone); }
+.lab-events li em { color: var(--accent, #7fdcff); font-style: normal; }
+
+.lab-keys {
+  position: absolute;
+  left: 16px;
+  bottom: 14px;
+  margin: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: rgba(233, 228, 216, 0.45);
+}
+
+.lab-paused #lab-hud::after {
+  content: "PAUSED";
+  position: absolute;
+  left: 50%;
+  top: 18px;
+  transform: translateX(-50%);
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.4em;
+  color: var(--accent, #7fdcff);
+}
+
+.lil-gui.root {
+  --background-color: rgba(8, 9, 14, 0.9);
+  --title-background-color: rgba(18, 20, 30, 0.95);
+  --widget-color: rgba(255, 255, 255, 0.07);
+  --hover-color: rgba(255, 255, 255, 0.12);
+  --focus-color: rgba(255, 255, 255, 0.16);
+  --number-color: var(--accent, #7fdcff);
+  --string-color: #ffd166;
+  --font-family: var(--font-body);
+  --font-size: 10.5px;
+  --width: 300px;
+  max-height: calc(100vh - 16px);
+  top: 8px;
+  right: 8px;
+  overflow-y: auto;
+}

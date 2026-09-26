@@ -12,7 +12,8 @@ from mathutils import Vector
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEXTURES = os.path.join(HERE, "art", "textures")
 TILE_METRES = 1.5
-ARENA_RADIUS = 27.0
+# Visible stone radius; must match ARENA_FLOOR_RADIUS in src/sim/constants.ts (playable disc + boss apron).
+ARENA_RADIUS = 29.0
 # Arena geometry was authored for a 9 m platform; horizontal extents are scaled by this factor.
 ARENA_SCALE = ARENA_RADIUS / 9.0
 FRAME_END = 97
@@ -557,14 +558,14 @@ def animate_idle(root, amplitude=0.06, frames=FRAME_END):
 
 def platform_mesh(parent):
     rng = random.Random(7251)
-    segments = 72
+    segments = 64
     ring_count = max(6, round(ARENA_RADIUS / 1.5))
     radii = tuple(ARENA_RADIUS * (ring + 1) / ring_count for ring in range(ring_count))
     vertices = [(0, 0, 0)]
     for ring, radius in enumerate(radii):
         for i in range(segments):
             angle = math.tau * i / segments
-            jitter = 1 + rng.uniform(-0.018, 0.018) * (1.0 + ring / (ring_count - 1))
+            jitter = 1 + rng.uniform(-0.018, 0.018) * (1.0 + ring / (ring_count - 1)) / ARENA_SCALE
             vertices.append((math.cos(angle) * radius * jitter,
                              math.sin(angle) * radius * jitter, 0))
     faces = [(0, i + 1, (i + 1) % segments + 1) for i in range(segments)]
@@ -695,7 +696,7 @@ def build_arena():
                        (midpoint[0], midpoint[1], crown_z),
                        (midpoint[0] + 0.12, midpoint[1], crown_z - 0.55)),
                       (0.65, 1.0, 0.65), 0.12, 8)
-    for i in range(count(20, 1.2)):
+    for i in range(count(20, 1.1)):
         angle = rng.uniform(0, math.tau)
         radius = rng.uniform(12, 25) * ARENA_SCALE
         pos = (math.cos(angle) * radius, math.sin(angle) * radius, rng.uniform(-8, 6))

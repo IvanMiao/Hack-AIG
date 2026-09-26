@@ -7,7 +7,7 @@ import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
 import type { NemesisSpec } from "../spec";
-import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
+import { ARENA_FLOOR_RADIUS, ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
 /** Everything the lab may retune live. Plain mutable objects so lil-gui can bind to them directly. */
@@ -141,7 +141,7 @@ interface BossPose {
 
 const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0, swing: 0, headTilt: 0 };
 const BOSS_COIL: BossPose = { lean: -0.3, lunge: -0.35, rise: 0.4, stretch: 1.06, squash: 1.1, glow: 1, swing: -2.3, headTilt: -0.5 };
-const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
+export const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
 const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0, swing: -1.45, headTilt: 0.3 };
 const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0, swing: 0.35, headTilt: 0.6 };
 
@@ -517,13 +517,13 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   arenaRoot.name = "Arena";
   scene.add(arenaRoot);
   const fallbackPlatform = new THREE.Mesh(
-    new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS * 0.85, 1.2, 14, 1),
+    new THREE.CylinderGeometry(ARENA_FLOOR_RADIUS, ARENA_FLOOR_RADIUS * 0.85, 1.2, 14, 1),
     createToonMaterial(0x14161f, 0x000000, { rim: 0 }),
   );
   fallbackPlatform.position.y = -0.6;
   addOutline(fallbackPlatform, 0.015);
   const fracture = new THREE.Mesh(
-    new THREE.TorusGeometry(ARENA_RADIUS, 0.06, 6, 48),
+    new THREE.TorusGeometry(ARENA_FLOOR_RADIUS, 0.06, 6, 48),
     new THREE.MeshBasicMaterial({
       color: accent,
       transparent: true,
@@ -557,7 +557,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       }
     `,
   });
-  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_RADIUS * 1.25, 64), edgeFadeMaterial);
+  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_FLOOR_RADIUS * 1.25, 64), edgeFadeMaterial);
   edgeFade.rotation.x = -Math.PI / 2;
   edgeFade.position.y = 0.035;
   edgeFade.renderOrder = 1;

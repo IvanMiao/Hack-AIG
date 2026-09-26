@@ -430,7 +430,8 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         break;
       case "ring":
         for (let i = 0; i < move.count; i += 1) {
-          const h = spawnHazard("ring", { kind: "ring", center: { ...b.pos }, radius: MOVE.ring.startRadius - (MOVE.ring.growth * MOVE.ring.waveGapMs * i) / 1000, thickness: MOVE.ring.thickness * move.scale, growth: MOVE.ring.growth, maxRadius: state.arena.radius + 1 }, move.damage, 60000);
+          const waveGapMs = MOVE.ring.waveGapMs * (state.flat ? FLAT.ringWaveGapScale : 1);
+          const h = spawnHazard("ring", { kind: "ring", center: { ...b.pos }, radius: MOVE.ring.startRadius - (MOVE.ring.growth * waveGapMs * i) / 1000, thickness: MOVE.ring.thickness * move.scale, growth: MOVE.ring.growth, maxRadius: state.arena.radius + 1 }, move.damage, 60000);
           h.cooldown = 0;
         }
         break;
@@ -441,7 +442,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
             // One lane, so the fan becomes a stream: shots queue up behind the boss on a low or high line.
             const lane = norm(vec(dir.x, 0), vec(b.facing.x < 0 ? -1 : 1, 0));
             const y = rng.next() < 0.5 ? FLAT.volley.lowY : FLAT.volley.highY;
-            state.projectiles.push({ id: state.nextId++, pos: add(b.pos, lane, BOSS.radius - i * FLAT.volley.gap), vel: scale(lane, MOVE.volley.speed), y, radius: MOVE.volley.radius * move.scale, damage: move.damage });
+            state.projectiles.push({ id: state.nextId++, pos: add(b.pos, lane, BOSS.radius - i * FLAT.volley.gap), vel: scale(lane, MOVE.volley.speed * FLAT.volley.speedScale), y, radius: MOVE.volley.radius * move.scale, damage: move.damage });
             continue;
           }
           const angle = move.count === 1 ? 0 : -spread / 2 + (spread * i) / (move.count - 1);
@@ -452,9 +453,11 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       }
       case "zone":
         for (let i = 0; i < move.count; i += 1) {
-          const offset = i === 0 ? vec() : state.flat ? vec(rng.range(-1.6, 1.6) * MOVE.zone.scatter, 0) : rotate(vec(0, MOVE.zone.scatter), rng.range(0, Math.PI * 2));
+          const radius = MOVE.zone.radius * move.scale;
+          // On the lane the zones tile outward from the aim point with a pocket to stand in between each pair.
+          const offset = i === 0 ? vec() : state.flat ? vec(Math.ceil(i / 2) * (2 * radius + FLAT.zone.pocket) * (i % 2 ? 1 : -1), 0) : rotate(vec(0, MOVE.zone.scatter), rng.range(0, Math.PI * 2));
           const center = clampToDisc(add(current.aim, offset), state.arena.radius - 0.5);
-          spawnHazard("zone", { kind: "circle", center, radius: MOVE.zone.radius * move.scale }, move.damage, MOVE.zone.ttlMs, true);
+          spawnHazard("zone", { kind: "circle", center, radius }, move.damage, MOVE.zone.ttlMs, true, state.flat ? FLAT.zone.armMs : 0);
         }
         break;
       case "blink": {

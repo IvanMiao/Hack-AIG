@@ -23,7 +23,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
       temper: "hunger",
       palette: ["#040404", "#4dff88", "#1a1f1c"],
     },
-    stats: { maxHp: 1026, poise: 55, aggression: 0.65, playerDamage: 1.5 },
+    stats: { maxHp: 1026, poise: 55, aggression: 0.8, playerDamage: 1.5 },
     phases: [
       {
         hpThreshold: 1,
@@ -39,11 +39,11 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
         hpThreshold: 0.55,
         rule: "flatline",
         moves: [
-          { type: "volley", telegraphMs: 500, damage: 15, scale: 1.1, count: 9 },
-          { type: "zone", telegraphMs: 900, damage: 24, scale: 1, count: 8 },
-          { type: "blink", telegraphMs: 500, damage: 21, scale: 1, count: 1, followUp: "nova" },
-          { type: "nova", telegraphMs: 1300, damage: 39, scale: 1.5, count: 1 },
-          { type: "ring", telegraphMs: 1000, damage: 18, scale: 1.2, count: 3 },
+          { type: "volley", telegraphMs: 800, damage: 22, scale: 1, count: 5 },
+          { type: "zone", telegraphMs: 1100, damage: 32, scale: 0.9, count: 3 },
+          { type: "blink", telegraphMs: 700, damage: 28, scale: 1, count: 1, followUp: "nova" },
+          { type: "nova", telegraphMs: 1400, damage: 39, scale: 1.3, count: 1 },
+          { type: "ring", telegraphMs: 1100, damage: 27, scale: 1.1, count: 2 },
         ],
       },
     ],

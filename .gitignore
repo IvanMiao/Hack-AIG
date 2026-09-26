@@ -10,3 +10,4 @@ dist-itch
 worker/worker-configuration.d.ts
 .DS_Store
 smoke-out
+blender/previews/

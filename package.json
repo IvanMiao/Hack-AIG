@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:itch": "vite build && node scripts/build-itch.mjs",
+    "assets:build": "${BLENDER:-blender} -b --factory-startup --python blender/build_assets.py -- --out src/assets/models",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p worker/tsconfig.json",

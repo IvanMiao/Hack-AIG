@@ -3,11 +3,12 @@ import { addOutline, createToonMaterial, RIM } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
 import { createHFHero, type HFHero } from "./hfHero";
+import { createCodexBoss, type CodexBoss } from "./codexBoss";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
-import { usesHFHero, type NemesisSpec } from "../spec";
+import { isCodexBout, type NemesisSpec } from "../spec";
 import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
@@ -636,6 +637,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let playerMixer: THREE.AnimationMixer | null = null;
   let hero: HFHero | null = null;
   let heroMode = false;
+  let codexBoss: CodexBoss | null = null;
   let bossMixer: THREE.AnimationMixer | null = null;
   let playerMaterials: ToonMaterialState[] = [];
   let bossMaterials: ToonMaterialState[] = [];
@@ -739,7 +741,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   };
 
   // Attract mode (no spec yet) is the default HF vs CODEX bout, so it gets the mascot too.
-  const wantsHero = () => (currentSpec ? usesHFHero(currentSpec) : true);
+  const wantsHero = () => (currentSpec ? isCodexBout(currentSpec) : true);
 
   const installPlayer = () => {
     const useHero = wantsHero();
@@ -771,8 +773,14 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     bossMixer?.stopAllAction();
     disposeGroup(bossVisualPivot);
     bossMaterials = [];
+    codexBoss = null;
     const asset = library?.bosses[spec.identity.silhouette];
-    if (asset) {
+    if (isCodexBout(spec)) {
+      bossRig = EMPTY_RIG;
+      codexBoss = createCodexBoss();
+      bossVisualPivot.add(codexBoss.root);
+      bossMaterials = collectToonMaterials(codexBoss.root);
+    } else if (asset) {
       const visual = instantiate(asset, spec.identity.palette, { outline: 0.024 });
       bossVisualPivot.add(visual);
       bossRig = buildBossRig(visual, spec.identity.silhouette);
@@ -804,7 +812,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
   const preloadBoss = async (spec: NemesisSpec, onProgress?: (fraction: number) => void) => {
     await ready;
-    if (!library || disposed) return;
+    if (!library || disposed || isCodexBout(spec)) return;
     const { silhouette } = spec.identity;
     const hadModel = !!library.bosses[silhouette];
     try {
@@ -849,7 +857,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
   const applySpec = (spec: NemesisSpec) => {
     currentSpec = spec;
-    if (usesHFHero(spec) !== heroMode) installPlayer();
+    if (isCodexBout(spec) !== heroMode) installPlayer();
     applyAccent(spec);
     installBoss(spec);
     if (library && !library.bosses[spec.identity.silhouette]) void preloadBoss(spec);
@@ -1082,6 +1090,17 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         entry.material.emissive.lerp(new THREE.Color(0xffd166), 0.4 + 0.3 * Math.sin(state.timeMs / 60));
       }
     }
+    codexBoss?.update(step, {
+      timeMs: state.timeMs,
+      glow: bossPoseNow.glow,
+      headTilt: bossPoseNow.headTilt,
+      hitFlash: b.hitFlash,
+      weakness: b.weaknessT > 0,
+      staggered: b.staggerT > 0,
+      telegraphing: b.current?.phase === "telegraph",
+      phaseIndex: b.phaseIndex,
+      reducedMotion: reducedMotion.matches,
+    });
 
     hazards.sync(state);
     toBoss.subVectors(boss.position, player.position).setY(0);

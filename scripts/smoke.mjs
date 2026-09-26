@@ -54,12 +54,13 @@ if (run("image")) await timed("nano banana image", async () => {
   return saveInline(data, "sky.png");
 });
 
-if (run("lyria")) {
-  const prompts = {
+const MUSIC_PROMPTS = {
     grief: "Instrumental boss battle loop, slow minor-key pipe organ and submerged choir, 70 bpm, mournful, dark fantasy, seamless loop, no vocals",
     rage: "Instrumental boss battle loop, aggressive taiko drums and distorted low brass, 150 bpm, relentless, dark fantasy, seamless loop, no vocals",
-  };
-  for (const [temper, text] of Object.entries(prompts)) {
+};
+
+if (run("lyria")) {
+  for (const [temper, text] of Object.entries(MUSIC_PROMPTS)) {
     await timed(`lyria clip ${temper}`, async () => {
       const data = await gemini("lyria-3-clip-preview", { contents: [{ parts: [{ text }] }] });
       return saveInline(data, `lyria-${temper}.mp3`);
@@ -74,14 +75,18 @@ if (run("gradium")) await timed("gradium token", async () => {
   return `expires_at=${expires_at}`;
 });
 
-if (run("elevenlabs") && process.env.ELEVENLABS_API_KEY) await timed("elevenlabs music", async () => {
-  const response = await fetch("https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128", {
-    method: "POST",
-    headers: { "content-type": "application/json", "xi-api-key": process.env.ELEVENLABS_API_KEY },
-    body: JSON.stringify({ model_id: "music_v2", prompt: "Instrumental dark fantasy boss battle loop, slow minor-key pipe organ and submerged choir, 70 bpm, mournful", music_length_ms: 30000 }),
-  });
-  if (!response.ok) throw new Error(`${response.status} ${(await response.text()).slice(0, 300)}`);
-  const path = `${OUT}/elevenlabs-grief.mp3`;
-  writeFileSync(path, Buffer.from(await response.arrayBuffer()));
-  return path;
-});
+if (run("elevenlabs") && process.env.ELEVENLABS_API_KEY) {
+  for (const [temper, prompt] of Object.entries(MUSIC_PROMPTS)) {
+    await timed(`elevenlabs music ${temper}`, async () => {
+      const response = await fetch("https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128", {
+        method: "POST",
+        headers: { "content-type": "application/json", "xi-api-key": process.env.ELEVENLABS_API_KEY },
+        body: JSON.stringify({ model_id: "music_v2", prompt, music_length_ms: 30000 }),
+      });
+      if (!response.ok) throw new Error(`${response.status} ${(await response.text()).slice(0, 300)}`);
+      const path = `${OUT}/elevenlabs-${temper}.mp3`;
+      writeFileSync(path, Buffer.from(await response.arrayBuffer()));
+      return path;
+    });
+  }
+}

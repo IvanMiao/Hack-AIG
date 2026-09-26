@@ -17,6 +17,9 @@ export interface BotProfile {
   heavyRate: number;
 }
 
+/** How early before impact the bot leaves the ground: the jump needs ~130 ms to clear a ground hazard. */
+const FLAT_JUMP_LEAD_MS = 320;
+
 /** A competent-but-mortal player: the difficulty gate is tuned against this profile. */
 export const AVERAGE_BOT: BotProfile = { reactionMs: 260, dodgeRate: 0.62, spacing: 2.2, heavyRate: 0.35 };
 
@@ -73,11 +76,15 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
     const d = dist(p.pos, b.pos) - BOSS.radius;
     const current = b.current;
     const input: PlayerInput = { ...IDLE_INPUT, move: vec() };
+    // On the lane there is no sideways: strafing becomes backing off, rolling becomes jumping.
+    const side = s.flat ? scale(toBoss, -1) : scale(perp(toBoss), circleSign);
 
     // Standing in (or under) an arena pulse: step off it first, weather beats everything else.
     for (const h of s.hazards) {
       if (h.source !== "arena" || h.shape.kind !== "circle" || !overlaps(h.shape, p.pos, PLAYER.radius + 0.7)) continue;
-      input.move = norm(sub(p.pos, h.shape.center), perp(toBoss));
+      const away = sub(p.pos, h.shape.center);
+      // A pool opens under the player's feet, so on the lane there is no direction to normalise: back off along x.
+      input.move = s.flat ? vec(Math.sign(away.x) || Math.sign(side.x) || 1, 0) : norm(away, perp(toBoss));
       return input;
     }
 
@@ -100,15 +107,18 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
     if (telegraphAge !== null && current?.phase === "telegraph") {
       telegraphAge += 1000 / 60;
       const remaining = current.telegraphMs - current.t;
+      if (s.flat && willDodge && telegraphAge >= prof.reactionMs && remaining <= FLAT_JUMP_LEAD_MS && p.y <= 0) {
+        input.jump = true;
+        return input;
+      }
       // Roll just before the hit lands; ranged moves are dodged by sidestepping instead.
-      if (willDodge && telegraphAge >= prof.reactionMs && remaining <= PLAYER.roll.iframeMs * 0.8 && p.action === "idle") {
+      if (!s.flat && willDodge && telegraphAge >= prof.reactionMs && remaining <= PLAYER.roll.iframeMs * 0.8 && p.action === "idle") {
         input.roll = true;
-        const side = scale(perp(toBoss), circleSign);
         input.move = current.move.type === "thrust" || current.move.type === "charge" || current.move.type === "volley" ? side : current.move.type === "nova" ? scale(toBoss, -1) : side;
         return input;
       }
       if (current.move.type === "volley" || current.move.type === "zone" || current.move.type === "ring") {
-        input.move = scale(perp(toBoss), circleSign);
+        input.move = side;
         return input;
       }
     }
@@ -128,7 +138,7 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
     }
     if (d > prof.spacing + 0.6) input.move = toBoss;
     else if (d < prof.spacing - 0.6) input.move = scale(toBoss, -1);
-    else input.move = scale(perp(toBoss), circleSign);
+    else input.move = side;
     return input;
   }
 }

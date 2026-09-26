@@ -193,6 +193,21 @@ describe("arena grudges", () => {
     expect(parseGrudgePatch({ observation: "o", patch: "p", ops: [{ op: "setRule", phaseIndex: 1, rule: "lava" }] }).ok).toBe(false);
   });
 
+  it("setRule can neither grant nor revoke flatline", () => {
+    const s = structuredClone(spec);
+    s.phases[1]!.rule = "flatline";
+    const next = applyGrudge(s, {
+      observation: "o",
+      patch: "p",
+      ops: [
+        { op: "setRule", phaseIndex: 0, rule: "flatline" },
+        { op: "setRule", phaseIndex: 1, rule: "pillars" },
+      ],
+    });
+    expect(next.phases[0]!.rule).toBe(spec.phases[0]!.rule);
+    expect(next.phases[1]!.rule).toBe("flatline");
+  });
+
   it("sidestep habit adds closing_ring when the phase has no rule", () => {
     const log = baseLog();
     log.rolls = { left: 8, right: 1, away: 0, toward: 1 };

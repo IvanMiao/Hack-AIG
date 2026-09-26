@@ -23,7 +23,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
       temper: "hunger",
       palette: ["#040404", "#4dff88", "#1a1f1c"],
     },
-    stats: { maxHp: 1026, poise: 55, aggression: 0.55 },
+    stats: { maxHp: 1026, poise: 55, aggression: 0.65, playerDamage: 1.5 },
     phases: [
       {
         hpThreshold: 1,
@@ -36,14 +36,14 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
         ],
       },
       {
-        hpThreshold: 0.5,
-        rule: "pillars",
+        hpThreshold: 0.55,
+        rule: "flatline",
         moves: [
-          { type: "volley", telegraphMs: 600, damage: 11, scale: 1.1, count: 9 },
-          { type: "zone", telegraphMs: 1000, damage: 17, scale: 1, count: 8 },
-          { type: "blink", telegraphMs: 600, damage: 15, scale: 1, count: 1, followUp: "nova" },
-          { type: "nova", telegraphMs: 1400, damage: 28, scale: 1.5, count: 1 },
-          { type: "ring", telegraphMs: 1100, damage: 13, scale: 1.2, count: 3 },
+          { type: "volley", telegraphMs: 500, damage: 15, scale: 1.1, count: 9 },
+          { type: "zone", telegraphMs: 900, damage: 24, scale: 1, count: 8 },
+          { type: "blink", telegraphMs: 500, damage: 21, scale: 1, count: 1, followUp: "nova" },
+          { type: "nova", telegraphMs: 1300, damage: 39, scale: 1.5, count: 1 },
+          { type: "ring", telegraphMs: 1000, damage: 18, scale: 1.2, count: 3 },
         ],
       },
     ],
@@ -61,7 +61,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     },
     music: {
       p1Prompt: "cold glitchy industrial electronica, ticking terminal clicks, sub bass pulse, 92 bpm, tense boss battle loop, instrumental",
-      p2Prompt: "the same theme with distorted breakbeats, corrupted data stutters and rising sirens, 184 bpm, instrumental",
+      p2Prompt: "the same theme re-scored as an NES-era 8-bit chiptune: square-wave lead, triangle bass, noise-channel drums, slightly detuned and a little too slow, unsettling, 184 bpm, instrumental",
       bpm: 92,
     },
     art: {

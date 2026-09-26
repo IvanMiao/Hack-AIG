@@ -138,9 +138,10 @@ export function applyGrudge(spec: NemesisSpec, patch: GrudgePatch): NemesisSpec 
         break;
       }
       case "setRule": {
-        if (rules >= 1 || !PHASE_RULES.includes(op.rule)) break;
+        if (rules >= 1 || !PHASE_RULES.includes(op.rule) || op.rule === "flatline") break;
         const phase = next.phases[Math.round(clamp(op.phaseIndex, 0, next.phases.length - 1))];
-        if (!phase) break;
+        // flatline is hand-authored for bound nightmares; a grudge may neither grant nor revoke it.
+        if (!phase || phase.rule === "flatline") break;
         phase.rule = op.rule;
         rules += 1;
         break;

@@ -191,6 +191,8 @@ postFolder.add(tuning.post, "bloomRadius", 0, 1, 0.01);
 postFolder.add(tuning.post, "vignette", 0, 1.5, 0.01);
 postFolder.add(tuning.post, "grain", 0, 0.2, 0.001);
 postFolder.add(tuning.post, "aberration", 0, 0.01, 0.0001);
+postFolder.add(tuning.post, "pixelate", 1, 8, 1);
+postFolder.add(tuning.post, "posterize", 0, 16, 1);
 postFolder.add(tuning.post, "saturation", 0.5, 1.5, 0.01);
 const fx = lookFolder.addFolder("fx");
 fx.add(tuning.fx, "particles");
@@ -369,7 +371,7 @@ const loop = (now: number) => {
     while (accumulator >= TICK_MS) {
       accumulator -= TICK_MS;
       events.push(...battle.step(input));
-      input.light = input.heavy = input.roll = false;
+      input.light = input.heavy = input.roll = input.jump = false;
     }
     afterStep(events);
   }

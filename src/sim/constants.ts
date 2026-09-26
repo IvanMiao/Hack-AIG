@@ -67,3 +67,17 @@ export const MOVE = {
   zone: { recoverMs: 600, radius: 1.9, ttlMs: 3600, tickMs: 900, tickFraction: 0.5, scatter: 3.2 },
   blink: { activeMs: 120, recoverMs: 350, distanceBehind: 2.4 },
 } as const;
+
+/** `flatline` phase rule: the arena collapses onto the x axis, the player gains a jump and hazards gain a height. */
+export const FLAT = {
+  /** per-tick decay of z toward the lane, so the collapse takes ~0.4 s instead of snapping */
+  laneSnap: 0.86,
+  jumpVelocity: 9.5,
+  gravity: 26,
+  /** ground hazards (sweep, thrust, nova, ring, zone, charge) miss a player whose feet are above this */
+  groundHazardHeight: 1.1,
+  /** volley shots stream in from behind the boss on two lanes: low ones are jumped, high ones are ducked under by staying down */
+  volley: { lowY: 0.5, highY: 2.0, gap: 4.5 },
+  /** landing on the boss from above counts as a light hit and bounces the player back up */
+  stomp: { minY: 0.9, maxY: 2.6, bounce: 0.75 },
+} as const;

@@ -296,3 +296,11 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
 #grudge .grudge-label { font-family: var(--font-display); font-size: 11px; letter-spacing: 0.35em; opacity: 0.7; }
 #grudge p { margin: 4px 0 0; opacity: 1; }
 #grudge #grudge-patch { font-style: italic; opacity: 0.75; }
+
+/* flatline: the sandbox has downgraded the bout to a 2D test case, and the HUD is caught in the same downgrade. */
+body.flatline #hud { font-family: var(--font-body); image-rendering: pixelated; }
+body.flatline .bar { height: 10px; border-width: 2px; border-color: var(--bone); background: var(--ink); image-rendering: pixelated; }
+body.flatline .bar > div { box-shadow: none; transition: width 0s steps(1); background: repeating-linear-gradient(90deg, var(--accent) 0 8px, color-mix(in srgb, var(--accent) 70%, black) 8px 10px); }
+body.flatline .phase-pip { transform: none; border-radius: 0; }
+body.flatline .phase-pip.active { box-shadow: none; }
+body.flatline #boss-name, body.flatline #boss-title, body.flatline #subtitle { text-shadow: 2px 2px 0 var(--ink); letter-spacing: 0.1em; }

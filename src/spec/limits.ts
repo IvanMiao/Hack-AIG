@@ -11,6 +11,7 @@ export const LIMITS = {
   movesPerPhase: { min: 3, max: 6 },
   phases: { min: 1, max: 3 },
   weaknessMultiplier: { min: 1.25, max: 3 },
+  playerDamage: { min: 0.5, max: 2.5 },
   bpm: { min: 60, max: 200 },
   taunts: { min: 1, max: 6 },
   playerDeathLines: { min: 1, max: 3 },

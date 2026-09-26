@@ -442,7 +442,8 @@ export function createHazardView(scene: THREE.Scene) {
       }
       projectilesUsed += 1;
       core.visible = halo.visible = true;
-      core.position.set(p.pos.x, 1.2, p.pos.z);
+      const height = state.flat ? p.y : 1.2;
+      core.position.set(p.pos.x, height, p.pos.z);
       if (terminal) {
         // A line of code in flight: a bright token stretched along its velocity with an additive trail behind it.
         const speed = Math.hypot(p.vel.x, p.vel.z) || 1;
@@ -454,7 +455,7 @@ export function createHazardView(scene: THREE.Scene) {
         halo.geometry = unit.token;
         halo.material = tokenTrail;
         halo.rotation.set(0, yaw, 0);
-        halo.position.set(p.pos.x - (p.vel.x / speed) * p.radius * 2.6, 1.2, p.pos.z - (p.vel.z / speed) * p.radius * 2.6);
+        halo.position.set(p.pos.x - (p.vel.x / speed) * p.radius * 2.6, height, p.pos.z - (p.vel.z / speed) * p.radius * 2.6);
         halo.scale.set(p.radius * 0.28, p.radius * 0.28, p.radius * 4.2);
       } else {
         core.geometry = unit.sphere;

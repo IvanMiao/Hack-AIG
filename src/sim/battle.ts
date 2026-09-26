@@ -1,5 +1,5 @@
 import type { Move, MoveType, NemesisSpec, Phase, PhaseRule } from "../spec";
-import { ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
+import { ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, FLAT, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
 import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
 import type { ArenaState, BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, HazardSource, Obstacle, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
@@ -26,7 +26,7 @@ export interface Battle {
   step(input: PlayerInput): BattleEvent[];
 }
 
-export const IDLE_INPUT: PlayerInput = { move: vec(), light: false, heavy: false, roll: false };
+export const IDLE_INPUT: PlayerInput = { move: vec(), light: false, heavy: false, roll: false, jump: false };
 
 const emptyLog = (): DeathLog => ({
   durationMs: 0,
@@ -54,9 +54,10 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
     arena,
     timeMs: 0,
     outcome: "fighting",
+    flat: spec.phases[0]?.rule === "flatline",
     player: {
       pos: vec(0, 5), facing: vec(0, -1), hp: PLAYER.maxHp, stamina: PLAYER.maxStamina,
-      action: "idle", actionT: 0, rollDir: vec(0, -1), attackLanded: false, staminaRegenDelay: 0, hitFlash: 0,
+      action: "idle", actionT: 0, rollDir: vec(0, -1), attackLanded: false, staminaRegenDelay: 0, hitFlash: 0, y: 0, vy: 0,
     },
     boss: {
       pos: vec(0, -4), facing: vec(0, 1), hp: spec.stats.maxHp, poiseDamage: 0, phaseIndex: 0, current: null,
@@ -80,6 +81,12 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
  */
 export function applyPhaseRule(state: BattleState, phase: Phase, events: BattleEvent[] | null): void {
   const arena = state.arena;
+  if (phase.rule === "flatline") {
+    // Cover from an earlier phase has no place on the lane: it shatters as the arena folds.
+    for (const o of arena.obstacles) events?.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by: "arena" });
+    arena.obstacles = [];
+    return;
+  }
   if (phase.rule === "pillars") {
     const centre = scale(add(state.player.pos, state.boss.pos), 0.5);
     const axis = norm(sub(state.player.pos, state.boss.pos));
@@ -226,14 +233,31 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     p.staminaRegenDelay = PLAYER.staminaRegenDelayMs;
   };
 
+  /** Pull a position onto the lane (z = 0) over a few ticks. */
+  const snapToLane = (pos: Vec2) => {
+    pos.z *= FLAT.laneSnap;
+    if (Math.abs(pos.z) < 0.01) pos.z = 0;
+  };
+
+  const grounded = (p: PlayerState) => p.y <= 0 && p.vy <= 0;
+  /** Airborne enough to clear a ground hazard (flat phases only). */
+  const clearsGround = () => state.flat && state.player.y >= FLAT.groundHazardHeight;
+
   const stepPlayer = (input: PlayerInput, events: BattleEvent[]) => {
     const p = state.player;
     const b = state.boss;
+    const flat = state.flat;
+    if (flat) snapToLane(p.pos);
     const toBoss = norm(sub(b.pos, p.pos));
-    const wants = norm(input.move, vec());
-    const moving = len(input.move) > 0.01;
+    const stick = flat ? vec(input.move.x, 0) : input.move;
+    const wants = norm(stick, vec());
+    const moving = len(stick) > 0.01;
+    const onGround = !flat || grounded(p);
 
-    if (p.action === "idle") {
+    if (flat && input.jump && grounded(p) && (p.action === "idle" || p.action === "roll")) {
+      p.action = "idle";
+      p.vy = FLAT.jumpVelocity;
+    } else if (p.action === "idle" && onGround) {
       if (input.roll && p.stamina >= PLAYER.roll.stamina) {
         p.rollDir = moving ? wants : scale(toBoss, -1);
         startAction(p, "roll", PLAYER.roll.stamina);
@@ -267,6 +291,17 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         hitBoss(attack.damage, attack.poise, p.action === "heavy", events);
       }
       if (p.actionT >= tickAttack(attack)) p.action = "idle";
+    }
+
+    if (flat) {
+      p.vy -= (FLAT.gravity * TICK_MS) / 1000;
+      p.y += (p.vy * TICK_MS) / 1000;
+      if (p.y <= 0) { p.y = 0; p.vy = 0; }
+      if (p.vy < 0 && p.y >= FLAT.stomp.minY && p.y <= FLAT.stomp.maxY && dist(p.pos, b.pos) <= BOSS.radius + PLAYER.radius && b.invulnerableT <= 0) {
+        p.vy = FLAT.jumpVelocity * FLAT.stomp.bounce;
+        state.log.lightAttacks += 1;
+        hitBoss(PLAYER.light.damage, PLAYER.light.poise, false, events);
+      }
     }
 
     if (state.arena.mutator === "tempest") p.pos = add(p.pos, state.arena.wind, TICK_MS / 1000);
@@ -312,7 +347,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const hitBoss = (damage: number, poise: number, heavy: boolean, events: BattleEvent[]) => {
     const b = state.boss;
     const weakness = b.weaknessT > 0;
-    const dealt = Math.round(damage * (weakness ? spec.weakness.multiplier : 1));
+    const dealt = Math.round(damage * (spec.stats.playerDamage ?? 1) * (weakness ? spec.weakness.multiplier : 1));
     b.hp = Math.max(0, b.hp - dealt);
     b.hitFlash = 120;
     b.poiseDamage += poise;
@@ -402,15 +437,22 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       case "volley": {
         const spread = MOVE.volley.spread * move.scale;
         for (let i = 0; i < move.count; i += 1) {
+          if (state.flat) {
+            // One lane, so the fan becomes a stream: shots queue up behind the boss on a low or high line.
+            const lane = norm(vec(dir.x, 0), vec(b.facing.x < 0 ? -1 : 1, 0));
+            const y = rng.next() < 0.5 ? FLAT.volley.lowY : FLAT.volley.highY;
+            state.projectiles.push({ id: state.nextId++, pos: add(b.pos, lane, BOSS.radius - i * FLAT.volley.gap), vel: scale(lane, MOVE.volley.speed), y, radius: MOVE.volley.radius * move.scale, damage: move.damage });
+            continue;
+          }
           const angle = move.count === 1 ? 0 : -spread / 2 + (spread * i) / (move.count - 1);
-          const projectile: Projectile = { id: state.nextId++, pos: add(b.pos, dir, BOSS.radius), vel: scale(rotate(dir, angle), MOVE.volley.speed), radius: MOVE.volley.radius * move.scale, damage: move.damage };
+          const projectile: Projectile = { id: state.nextId++, pos: add(b.pos, dir, BOSS.radius), vel: scale(rotate(dir, angle), MOVE.volley.speed), y: 1, radius: MOVE.volley.radius * move.scale, damage: move.damage };
           state.projectiles.push(projectile);
         }
         break;
       }
       case "zone":
         for (let i = 0; i < move.count; i += 1) {
-          const offset = i === 0 ? vec() : rotate(vec(0, MOVE.zone.scatter), rng.range(0, Math.PI * 2));
+          const offset = i === 0 ? vec() : state.flat ? vec(rng.range(-1.6, 1.6) * MOVE.zone.scatter, 0) : rotate(vec(0, MOVE.zone.scatter), rng.range(0, Math.PI * 2));
           const center = clampToDisc(add(current.aim, offset), state.arena.radius - 0.5);
           spawnHazard("zone", { kind: "circle", center, radius: MOVE.zone.radius * move.scale }, move.damage, MOVE.zone.ttlMs, true);
         }
@@ -445,12 +487,14 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         b.idleFor = BOSS.phaseChangeInvulnMs + 300;
         state.hazards = [];
         state.projectiles = [];
+        if (phase.rule === "flatline") state.flat = true;
         events.push({ type: "phaseChange", phaseIndex: i });
         applyPhaseRule(state, phase, events);
         break;
       }
     }
 
+    if (state.flat) snapToLane(b.pos);
     if (b.staggerT > 0) { b.staggerT = Math.max(0, b.staggerT - TICK_MS); return; }
 
     const phase = currentPhase(spec, b);
@@ -503,7 +547,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         for (const o of [...state.arena.obstacles]) {
           if (solid(o) && dist(b.pos, o.pos) <= o.radius + MOVE.charge.hitRadius * current.move.scale) damageObstacle(o, ARENA_PILLARS.damage.charge, "charge", events);
         }
-        if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned) {
+        if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned && !clearsGround()) {
           current.spawned = true;
           hurtPlayer(current.move.damage, "charge", events);
         }
@@ -530,7 +574,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       const h = advanceHazard(raw, TICK_MS);
       if (h.ttl <= 0) continue;
       const canHit = h.armT <= 0 && (h.repeat ? h.cooldown <= 0 : !h.hit);
-      if (canHit && overlaps(h.shape, p.pos, PLAYER.radius)) {
+      if (canHit && !clearsGround() && overlaps(h.shape, p.pos, PLAYER.radius)) {
         // A dodged swing is spent: rolling through the front of a hitbox never gets clipped by its tail.
         h.hit = true;
         h.cooldown = MOVE.zone.tickMs;
@@ -545,13 +589,15 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     for (const pr of state.projectiles) {
       const from = pr.pos;
       pr.pos = add(pr.pos, pr.vel, TICK_MS / 1000);
-      if (len(pr.pos) > state.arena.radius + 1) continue;
+      // Flat volleys queue up outside the disc behind the boss; only drop shots that are leaving.
+      if (len(pr.pos) > state.arena.radius + 1 && dot(pr.pos, pr.vel) > 0) continue;
       const cover = blockedByObstacle(from, pr.pos, state.arena.obstacles, pr.radius);
       if (cover) {
         events.push({ type: "obstacleHit", id: cover.id, hpLeft: cover.hp, by: "volley" });
         continue;
       }
-      if (dist(pr.pos, p.pos) <= pr.radius + PLAYER.radius) {
+      const inHeight = !state.flat || Math.abs(pr.y - (p.y + PLAYER.radius)) <= pr.radius + PLAYER.radius;
+      if (inHeight && dist(pr.pos, p.pos) <= pr.radius + PLAYER.radius) {
         hurtPlayer(pr.damage, "volley", events);
         continue;
       }

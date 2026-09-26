@@ -9,6 +9,8 @@ export interface PlayerInput {
   light: boolean;
   heavy: boolean;
   roll: boolean;
+  /** flatline phases only; ignored while the arena is 3D */
+  jump: boolean;
 }
 
 export interface PlayerState {
@@ -24,6 +26,9 @@ export interface PlayerState {
   attackLanded: boolean;
   staminaRegenDelay: number;
   hitFlash: number;
+  /** height of the feet above the floor; always 0 outside flatline phases */
+  y: number;
+  vy: number;
 }
 
 export type MovePhase = "telegraph" | "active" | "recover";
@@ -84,6 +89,8 @@ export interface Projectile {
   id: number;
   pos: Vec2;
   vel: Vec2;
+  /** height of the shot; only tested against the player in flatline phases */
+  y: number;
   radius: number;
   damage: number;
 }
@@ -162,6 +169,8 @@ export interface BattleState {
   arena: ArenaState;
   timeMs: number;
   outcome: Outcome;
+  /** the arena has collapsed onto the x axis (a `flatline` phase was reached) */
+  flat: boolean;
   player: PlayerState;
   boss: BossState;
   hazards: Hazard[];

@@ -89,6 +89,7 @@ describe("difficulty gate", () => {
   it("calibration pulls an absurd boss back into the band", () => {
     const brutal: NemesisSpec = structuredClone(spec);
     brutal.stats.maxHp = 1500;
+    brutal.stats.playerDamage = 1;
     for (const p of brutal.phases) for (const m of p.moves) m.damage = 80;
     const result = calibrateDifficulty(brutal, 16, 10);
     expect(result.after).toBeLessThanOrEqual(DIFFICULTY_BAND.max);
@@ -142,6 +143,7 @@ describe("closing_ring", () => {
 
   it("starts at the full radius and shrinks over the phase change", () => {
     const b = createBattle(ringed(), 5);
+    b.debug.playerInvulnerable = true;
     expect(b.state.arena.radius).toBe(ARENA_RADIUS);
     b.state.boss.hp = Math.floor(spec.stats.maxHp * 0.49);
     const events = run(b, IDLE_INPUT, 100);

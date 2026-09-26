@@ -9,6 +9,8 @@ export function checkInvariants(spec: NemesisSpec): string[] {
   const problems: string[] = [];
   const { maxHp } = spec.stats;
   if (maxHp < LIMITS.maxHp.min || maxHp > LIMITS.maxHp.max) problems.push(`maxHp out of range: ${maxHp}`);
+  const { playerDamage } = spec.stats;
+  if (playerDamage !== undefined && (playerDamage < LIMITS.playerDamage.min || playerDamage > LIMITS.playerDamage.max)) problems.push(`playerDamage out of range: ${playerDamage}`);
   if (spec.phases.length < LIMITS.phases.min || spec.phases.length > LIMITS.phases.max) problems.push(`phase count ${spec.phases.length}`);
   if (spec.phases[0]?.hpThreshold !== 1) problems.push("phase 1 must start at hpThreshold 1");
 

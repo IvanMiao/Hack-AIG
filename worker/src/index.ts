@@ -3,7 +3,10 @@ import { buildAsset, isAssetKind, loadSpecByCode, readBlob } from "./assets";
 import { forgeNemesis } from "./forge";
 import { mintGradiumToken } from "./gradium";
 import { corsHeaders, error, json, readJson } from "./http";
+import { learnNemesis } from "./learn";
 import { getLineage, recordOutcome } from "./lineage";
+import { checkInvariants, type NemesisSpec } from "../../src/spec";
+import type { DeathLog } from "../../src/sim/types";
 
 const MAX_INCANTATION_CHARS = 280;
 
@@ -44,8 +47,11 @@ export default {
       }
 
       if (path === "/learn" && request.method === "POST") {
-        // H3: Gemini turns a death log into a whitelisted spec patch. Until then the client applies local rule patches.
-        return error(501, "learn not implemented yet", cors);
+        const body = await readJson<{ spec?: NemesisSpec; deathLog?: DeathLog }>(request);
+        if (!body?.spec || !body?.deathLog) return error(400, "need spec and deathLog", cors);
+        const problems = checkInvariants(body.spec);
+        if (problems.length > 0) return error(400, `unfair spec: ${problems.join("; ")}`, cors);
+        return json(await learnNemesis(env, body.spec, body.deathLog), {}, cors);
       }
 
       if (path === "/voice-token" && request.method === "POST") {

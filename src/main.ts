@@ -1,5 +1,6 @@
 import { requestAllAssets, type AssetBundle } from "./assetsClient";
 import { forge } from "./forgeClient";
+import { learn } from "./learnClient";
 import { createGameAudio } from "./game/audio";
 import { createStage } from "./game/createStage";
 import { createCombatInput } from "./game/input";
@@ -29,6 +30,9 @@ const playerStamina = $("player-stamina");
 const subtitle = $("subtitle");
 const hitVignette = $("hit-vignette");
 const portrait = $<HTMLImageElement>("portrait");
+const grudgeCard = $("grudge");
+const grudgeObservation = $("grudge-observation");
+const grudgePatch = $("grudge-patch");
 
 const stage = createStage(canvas);
 const combat = createCombatInput(canvas);
@@ -136,6 +140,15 @@ function showOutcome(kind: "death" | "victory") {
   if (!spec) return;
   $("outcome-title").textContent = kind === "death" ? "YOU DIED" : "NEMESIS FELLED";
   $("outcome-line").textContent = kind === "death" ? `${spec.identity.name} will remember this.` : spec.voice.lines.defeat;
+  if (kind === "death") {
+    grudgeCard.classList.remove("hidden");
+    grudgeObservation.textContent = "It is studying how you died…";
+    grudgePatch.textContent = "";
+    retryButton.textContent = "FIGHT AGAIN";
+  } else {
+    grudgeCard.classList.add("hidden");
+    retryButton.textContent = "FIGHT AGAIN";
+  }
   outcomePanel.classList.remove("hidden");
   outcomePanel.dataset.kind = kind;
   showPortrait(null);
@@ -171,6 +184,19 @@ function handleEvents(events: readonly BattleEvent[]) {
         say(spec.voice.lines.playerDeath[e.lineIndex] ?? spec.voice.lines.playerDeath[0] ?? "", 6000);
         audio.speak(`playerDeath${e.lineIndex}`);
         rememberDeath(battle.state.log, spec.code);
+        {
+          const deadSpec = spec;
+          const deadBattle = battle;
+          const token = summonToken;
+          void learn(deadSpec, deadBattle.state.log).then((result) => {
+            // Drop the grudge if the player already retried or started a new summon.
+            if (token !== summonToken || battle !== deadBattle) return;
+            spec = result.spec;
+            grudgeObservation.textContent = result.grudge.observation;
+            grudgePatch.textContent = result.grudge.patch;
+            retryButton.textContent = `FACE IT AGAIN · GEN ${result.spec.lineage.gen}`;
+          });
+        }
         window.setTimeout(() => showOutcome("death"), 900);
         break;
       case "bossDefeat":

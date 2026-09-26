@@ -8,6 +8,11 @@ export interface NormalizeResult {
 
 const truncate = (text: string, max: number): string => text.trim().slice(0, max);
 
+/** Clamp a single move into LIMITS, dropping a self-referencing followUp. Used by normalizeDraft and applyGrudge. */
+export function clampMove(move: Move, maxHp: number): Move {
+  return normalizeMove(move, maxHp, [], "move");
+}
+
 function normalizeMove(move: Move, maxHp: number, repairs: string[], label: string): Move {
   const maxDamage = Math.min(LIMITS.damage.max, Math.floor(maxHp * LIMITS.damageFractionOfHp.max));
   const next: Move = {

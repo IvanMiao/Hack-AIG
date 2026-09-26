@@ -54,6 +54,11 @@ button:disabled { opacity: 0.4; cursor: wait; }
 #outcome[data-kind="death"] h2 { color: #c8102e; text-shadow: 0 0 40px rgba(200, 16, 46, 0.6); }
 #outcome[data-kind="victory"] h2 { color: var(--bone); text-shadow: 0 0 40px var(--accent); }
 #outcome p { max-width: 60ch; text-align: center; opacity: 0.8; margin: 0 0 12px; }
+#grudge { background: #efe9dc; color: #1a1712; transform: rotate(-1.5deg); border: 1px dashed #1a1712;
+  max-width: 46ch; padding: 10px 16px; }
+#grudge .grudge-label { font-family: var(--font-display); font-size: 11px; letter-spacing: 0.35em; opacity: 0.7; }
+#grudge p { margin: 4px 0 0; opacity: 1; }
+#grudge #grudge-patch { font-style: italic; opacity: 0.75; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Summoning ritual: four Forge cards flip as Gemini's fields land, then glow as each partner asset arrives. */

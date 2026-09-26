@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { addOutline, createToonMaterial } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import type { NemesisSpec } from "../spec";
+import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
 export interface Stage {
   renderer: THREE.WebGLRenderer;
@@ -21,19 +22,24 @@ export const ARENA_RADIUS = 9;
 function disposeAssetLibrary(library: AssetLibrary): void {
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
   for (const gltf of [library.arena, library.player, ...Object.values(library.bosses)]) {
     gltf.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       geometries.add(object.geometry);
-      for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material);
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        materials.add(material);
+        const textured = material as THREE.MeshStandardMaterial;
+        if (textured.map) textures.add(textured.map);
+        if (textured.normalMap) textures.add(textured.normalMap);
+      }
     });
   }
   for (const geometry of geometries) geometry.dispose();
   for (const material of materials) {
-    const map = (material as THREE.MeshBasicMaterial).map;
-    map?.dispose();
     material.dispose();
   }
+  for (const texture of textures) texture.dispose();
 }
 
 function disposeGroup(group: THREE.Group): void {
@@ -87,33 +93,51 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   camera.position.set(14, 7, 14);
   camera.lookAt(0, 1, 0);
   const accent = new THREE.Color("#7fdcff");
+  const skyTexture = new THREE.TextureLoader().load(skyUrl);
+  skyTexture.colorSpace = THREE.SRGBColorSpace;
+  skyTexture.wrapS = THREE.RepeatWrapping;
+  skyTexture.wrapT = THREE.ClampToEdgeWrapping;
   const skyMaterial = new THREE.ShaderMaterial({
     side: THREE.BackSide,
+    depthWrite: false,
     uniforms: {
+      skyTexture: { value: skyTexture },
       upper: { value: new THREE.Color("#030309") },
       horizon: { value: accent.clone().multiplyScalar(0.16) },
       accent: { value: accent },
     },
     vertexShader: `
       varying float skyHeight;
+      varying vec2 skyUv;
       void main() {
         skyHeight = normalize(position).y;
+        skyUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
+      uniform sampler2D skyTexture;
       uniform vec3 upper;
       uniform vec3 horizon;
       uniform vec3 accent;
       varying float skyHeight;
+      varying vec2 skyUv;
       void main() {
-        float band = smoothstep(-0.38, 0.36, skyHeight);
-        float glow = exp(-pow((skyHeight + 0.08) * 5.0, 2.0)) * 0.42;
-        gl_FragColor = vec4(mix(horizon, upper, band) + accent * glow, 1.0);
+        float imageV = skyHeight > 0.0
+          ? mix(0.37, 1.0, skyHeight)
+          : mix(0.0, 0.37, skyHeight + 1.0);
+        vec3 image = texture2D(skyTexture, vec2(skyUv.x, imageV)).rgb;
+        float light = dot(image, vec3(0.2126, 0.7152, 0.0722));
+        float clouds = smoothstep(0.025, 0.74, light);
+        float band = exp(-pow((skyHeight + 0.03) * 5.5, 2.0));
+        vec3 base = mix(upper, horizon, band * 0.34);
+        vec3 tint = accent * mix(0.14, 0.82, light);
+        gl_FragColor = vec4(mix(base, tint, clouds) + accent * band * 0.16, 1.0);
       }
     `,
   });
-  scene.add(new THREE.Mesh(new THREE.SphereGeometry(150, 32, 20), skyMaterial));
+  const skyDome = new THREE.Mesh(new THREE.SphereGeometry(150, 32, 20), skyMaterial);
+  scene.add(skyDome);
   scene.fog = new THREE.FogExp2(0x12091d, 0.018);
 
   const starPositions = new Float32Array(900 * 3);
@@ -210,6 +234,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   let library: AssetLibrary | null = null;
   let playerMixer: THREE.AnimationMixer | null = null;
   let bossMixer: THREE.AnimationMixer | null = null;
+  let playerLean: THREE.Group | null = null;
   let runeGroup: THREE.Group | null = null;
   let bossSpawn = 1;
   let attractAngle = 0;
@@ -221,11 +246,12 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     arenaRoot.add(visual);
     visual.updateMatrixWorld(true);
     const runes = new THREE.Group();
-    runes.name = "Rotating runes";
+    runes.name = "Rotating sigil";
     visual.add(runes);
     const runeMeshes: THREE.Object3D[] = [];
     visual.traverse((object) => {
-      if (object !== runes && object.name.toLowerCase().includes("runic")) runeMeshes.push(object);
+      const name = object.name.toLowerCase();
+      if (object !== runes && (name.includes("runic") || name.includes("sigil"))) runeMeshes.push(object);
     });
     for (const object of runeMeshes) runes.attach(object);
     runeGroup = runes;
@@ -236,7 +262,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     if (playerMixer) playerMixer.stopAllAction();
     disposeGroup(player);
     const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#1c1c26"], { player: true, outline: 0.016 });
-    player.add(visual);
+    playerLean = new THREE.Group();
+    playerLean.add(visual);
+    player.add(playerLean);
     playerMixer = new THREE.AnimationMixer(visual);
     const clip = library.player.animations[0];
     if (clip) playerMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
@@ -279,7 +307,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     } else {
       if (bossMixer) bossMixer.stopAllAction();
       disposeGroup(boss);
-      const visual = instantiate(library.bosses[spec.identity.silhouette], spec.identity.palette, { outline: 0.035 });
+      const visual = instantiate(library.bosses[spec.identity.silhouette], spec.identity.palette, { outline: 0.024 });
       boss.add(visual);
       bossMixer = new THREE.AnimationMixer(visual);
       const clip = library.bosses[spec.identity.silhouette].animations[0];
@@ -330,8 +358,10 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       attractAngle += step * 0.075;
     }
 
-    player.lookAt(boss.position.x, 0, boss.position.z);
-    player.rotation.x = mode === "fight" ? THREE.MathUtils.clamp(-input.z * 0.08, -0.12, 0.12) : 0;
+    player.rotation.set(0, Math.atan2(toBoss.x, toBoss.z), 0);
+    if (playerLean) {
+      playerLean.rotation.x = mode === "fight" ? THREE.MathUtils.clamp(input.z * 0.08, -0.12, 0.12) : 0;
+    }
     boss.lookAt(player.position.x, 0, player.position.z);
 
     if (mode === "attract") {
@@ -343,6 +373,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       camera.position.lerp(desired, 1 - Math.exp(-step * 8));
       camera.lookAt(boss.position.x, 1.8, boss.position.z);
     }
+    skyDome.position.copy(camera.position);
 
     if (bossSpawn < 1) {
       bossSpawn = Math.min(1, bossSpawn + step / 0.82);
@@ -389,18 +420,22 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       disposeGroup(boss);
       const geometries = new Set<THREE.BufferGeometry>();
       const materials = new Set<THREE.Material>();
+      const textures = new Set<THREE.Texture>();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
           geometries.add(object.geometry);
           for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
             materials.add(material);
-            const map = (material as THREE.MeshBasicMaterial).map;
-            map?.dispose();
+            const textured = material as THREE.MeshStandardMaterial;
+            if (textured.map) textures.add(textured.map);
+            if (textured.normalMap) textures.add(textured.normalMap);
           }
         }
       });
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
+      textures.add(skyTexture);
+      for (const texture of textures) texture.dispose();
       if (library) disposeAssetLibrary(library);
       renderer.dispose();
     },

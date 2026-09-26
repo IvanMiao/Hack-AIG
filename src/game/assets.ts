@@ -80,28 +80,63 @@ export function instantiate(
     metal: new THREE.Color("#5a5f6e"),
     glow: accent.clone(),
   };
-  const shared = new Map<MaterialRole, THREE.Material>();
+  const shared = new Map<string, THREE.Material>();
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x030308, side: THREE.BackSide });
   clone.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
     const source = Array.isArray(object.material) ? object.material[0] : object.material;
+    const textured = source as THREE.MeshStandardMaterial;
+    const map = textured.map ?? undefined;
+    const normalMap = textured.normalMap ?? undefined;
     const role = materialRole(source.name);
     if (!role) return;
     object.userData.materialRole = role;
-    let mapped = shared.get(role);
+    const isSigil = role === "glow" && object.name.toLowerCase().includes("sigil") && !!map;
+    const isFracture = role === "glow" && object.name.toLowerCase().includes("fracture");
+    const materialKey = `${role}:${isSigil ? "sigil" : isFracture ? "fracture" : ""}`;
+    let mapped = shared.get(materialKey);
     if (!mapped) {
       if (role === "accent" || role === "glow") {
-        mapped = new THREE.MeshBasicMaterial({ color: colors[role], fog: role !== "glow" });
+        if (isSigil && map) {
+          map.colorSpace = THREE.NoColorSpace;
+          mapped = new THREE.MeshBasicMaterial({
+            color: colors.glow,
+            alphaMap: map,
+            transparent: true,
+            opacity: 0.82,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            toneMapped: false,
+          });
+        } else {
+          if (map) map.colorSpace = THREE.SRGBColorSpace;
+          mapped = new THREE.MeshBasicMaterial({
+            color: colors[role],
+            map,
+            fog: role !== "glow",
+            transparent: isFracture,
+            opacity: isFracture ? 0.24 : 1,
+            depthWrite: !isFracture,
+            blending: isFracture ? THREE.AdditiveBlending : THREE.NormalBlending,
+            toneMapped: role === "glow",
+          });
+        }
       } else {
-        mapped = createToonMaterial(colors[role]);
+        mapped = createToonMaterial(colors[role], 0x000000, { map, normalMap });
       }
-      shared.set(role, mapped);
+      shared.set(materialKey, mapped);
     }
     object.material = mapped;
-    if (role !== "accent" && role !== "glow" && options.outline !== 0) {
-      const outline = addOutline(object, options.outline ?? 0.018, 0x030308);
-      (outline.material as THREE.Material).dispose();
-      outline.material = outlineMaterial;
+    if (role !== "accent" && role !== "glow" && options.outline !== 0 && !object.name.toLowerCase().includes("shard")) {
+      if (!object.geometry.boundingSphere) object.geometry.computeBoundingSphere();
+      const scale = Math.max(Math.abs(object.scale.x), Math.abs(object.scale.y), Math.abs(object.scale.z));
+      if ((object.geometry.boundingSphere?.radius ?? 0) * scale >= 0.15) {
+        const thickness = map || normalMap ? Math.min(options.outline ?? 0.024, 0.03) : options.outline ?? 0.024;
+        const outline = addOutline(object, thickness, 0x030308);
+        (outline.material as THREE.Material).dispose();
+        outline.material = outlineMaterial;
+      }
     }
   });
   clone.userData.sharedMaterials = [...shared.values(), outlineMaterial];

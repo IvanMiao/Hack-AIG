@@ -1,6 +1,6 @@
 import type { PlayerInput } from "../sim";
 
-/** Keyboard + mouse → sim input. Attack/roll are edge-triggered so a held key fires once per press. */
+/** Keyboard + mouse → sim input. Attack/roll/jump are edge-triggered so a held key fires once per press. Space is roll in 3D and jump on the lane; the sim picks. */
 export function createCombatInput(canvas: HTMLCanvasElement): { read(): PlayerInput; dispose(): void } {
   const held = new Set<string>();
   const pressed = new Set<string>();
@@ -27,15 +27,19 @@ export function createCombatInput(canvas: HTMLCanvasElement): { read(): PlayerIn
     return hit;
   };
   return {
-    read: () => ({
-      move: {
-        x: (has("KeyD", "ArrowRight") ? 1 : 0) - (has("KeyA", "ArrowLeft") ? 1 : 0),
-        z: (has("KeyW", "ArrowUp") ? 1 : 0) - (has("KeyS", "ArrowDown") ? 1 : 0),
-      },
-      light: take("KeyJ", "MouseLight"),
-      heavy: take("KeyK", "MouseHeavy"),
-      roll: take("Space", "ShiftLeft", "ShiftRight"),
-    }),
+    read: () => {
+      const space = take("Space");
+      return {
+        move: {
+          x: (has("KeyD", "ArrowRight") ? 1 : 0) - (has("KeyA", "ArrowLeft") ? 1 : 0),
+          z: (has("KeyW", "ArrowUp") ? 1 : 0) - (has("KeyS", "ArrowDown") ? 1 : 0),
+        },
+        light: take("KeyJ", "MouseLight"),
+        heavy: take("KeyK", "MouseHeavy"),
+        roll: space || take("ShiftLeft", "ShiftRight"),
+        jump: space || take("KeyW", "ArrowUp"),
+      };
+    },
     dispose: () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);

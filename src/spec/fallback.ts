@@ -37,7 +37,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
       },
       {
         hpThreshold: 0.5,
-        rule: "rift_beat",
+        rule: "flatline",
         moves: [
           { type: "volley", telegraphMs: 600, damage: 10, scale: 1.1, count: 9 },
           { type: "zone", telegraphMs: 1000, damage: 16, scale: 1, count: 8 },
@@ -61,7 +61,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     },
     music: {
       p1Prompt: "cold glitchy industrial electronica, ticking terminal clicks, sub bass pulse, 92 bpm, tense boss battle loop, instrumental",
-      p2Prompt: "the same theme with distorted breakbeats, corrupted data stutters and rising sirens, 184 bpm, instrumental",
+      p2Prompt: "the same theme re-scored as an NES-era 8-bit chiptune: square-wave lead, triangle bass, noise-channel drums, slightly detuned and a little too slow, unsettling, 184 bpm, instrumental",
       bpm: 92,
     },
     art: {

@@ -10,7 +10,8 @@ export type Temper = (typeof TEMPERS)[number];
 export const MOVE_TYPES = ["sweep", "thrust", "charge", "nova", "ring", "volley", "zone", "blink"] as const;
 export type MoveType = (typeof MOVE_TYPES)[number];
 
-export const PHASE_RULES = ["none", "closing_ring", "pillars", "rift_beat"] as const;
+/** `flatline` collapses the fight onto one axis with a jump (the 2D phase); it is reserved for bound nightmares. */
+export const PHASE_RULES = ["none", "closing_ring", "pillars", "rift_beat", "flatline"] as const;
 export type PhaseRule = (typeof PHASE_RULES)[number];
 
 export const WEAKNESS_TRIGGERS = ["after_blink", "after_charge", "heavy_hit", "parry"] as const;

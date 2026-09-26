@@ -17,6 +17,10 @@ export interface PostSettings {
   /** -1..1, negative desaturates */
   saturation: number;
   exposure: number;
+  /** screen pixels per output pixel; 1 = off. `flatten()` raises it during 2D phases */
+  pixelate: number;
+  /** colour levels per channel; 0 = off */
+  posterize: number;
 }
 
 export const DEFAULT_POST: PostSettings = {
@@ -29,7 +33,12 @@ export const DEFAULT_POST: PostSettings = {
   aberration: 0.0006,
   saturation: 0.05,
   exposure: 1.2,
+  pixelate: 1,
+  posterize: 0,
 };
+
+/** Look of a fully collapsed `flatline` phase: chunky pixels, few colours, washed out, a little too much bleed. */
+const FLAT_LOOK = { pixelate: 6, posterize: 6, saturation: -0.3, grain: 0.05, aberration: 0.0025 };
 
 const GRADE_FRAG = /* glsl */ `
 uniform sampler2D tDiffuse;
@@ -42,12 +51,18 @@ uniform float uSaturation;
 uniform float uPulse;
 uniform vec3 uPulseColor;
 uniform float uWhite;
+uniform float uPixelate;
+uniform float uPosterize;
 varying vec2 vUv;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + uTime) * 43758.5453); }
 
 void main() {
   vec2 uv = vUv;
+  if (uPixelate > 1.0) {
+    vec2 cell = vec2(uPixelate) / uResolution;
+    uv = (floor(uv / cell) + 0.5) * cell;
+  }
   vec2 toCenter = uv - 0.5;
   float r = length(toCenter);
   // Chromatic aberration grows toward the edge and spikes with hit pulses.
@@ -60,6 +75,8 @@ void main() {
 
   float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
   col = mix(vec3(luma), col, 1.0 + uSaturation - uPulse * 0.45);
+
+  if (uPosterize > 0.5) col = floor(col * uPosterize + 0.5) / uPosterize;
 
   float vig = smoothstep(0.95, 0.25, r * (1.0 + uVignette * 0.6));
   col *= mix(1.0, vig, uVignette);
@@ -84,6 +101,8 @@ export interface PostFX {
   pulse(color: THREE.ColorRepresentation, strength?: number): void;
   /** Full-frame white flash, decays over ~120ms. */
   whiteFlash(strength?: number): void;
+  /** 0..1 blend toward the pixelated, posterized `flatline` look; 0 restores the grade in `settings`. */
+  flatten(amount: number): void;
   render(dt: number): void;
   dispose(): void;
 }
@@ -106,6 +125,8 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     uPulse: { value: 0 },
     uPulseColor: { value: new THREE.Color(0xff2d4f) },
     uWhite: { value: 0 },
+    uPixelate: { value: 1 },
+    uPosterize: { value: 0 },
   };
   const grade = new ShaderPass(new THREE.ShaderMaterial({ uniforms: u, vertexShader: GRADE_VERT, fragmentShader: GRADE_FRAG }));
   composer.addPass(grade);
@@ -114,6 +135,7 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   let pulse = 0;
   let white = 0;
   let time = 0;
+  let flat = 0;
 
   return {
     settings,
@@ -129,6 +151,9 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     whiteFlash(strength = 0.6) {
       white = Math.max(white, strength);
     },
+    flatten(amount) {
+      flat = THREE.MathUtils.clamp(amount, 0, 1);
+    },
     render(dt) {
       time += dt;
       pulse = Math.max(0, pulse - dt / 0.35);
@@ -143,11 +168,14 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
       bloom.threshold = settings.bloomThreshold;
       u.uTime.value = time;
       u.uVignette.value = settings.vignette;
-      u.uGrain.value = settings.grain;
-      u.uAberration.value = settings.aberration;
-      u.uSaturation.value = settings.saturation;
+      u.uGrain.value = settings.grain + FLAT_LOOK.grain * flat;
+      u.uAberration.value = settings.aberration + FLAT_LOOK.aberration * flat;
+      u.uSaturation.value = settings.saturation + FLAT_LOOK.saturation * flat;
       u.uPulse.value = pulse * pulse;
       u.uWhite.value = white;
+      // Pixels snap in whole steps so the collapse reads as a resolution downgrade, not a blur.
+      u.uPixelate.value = Math.max(settings.pixelate, 1 + Math.floor(flat * (FLAT_LOOK.pixelate - 1) + 0.001));
+      u.uPosterize.value = settings.posterize > 0 ? settings.posterize : flat > 0.35 ? FLAT_LOOK.posterize : 0;
       composer.render(dt);
     },
     dispose() {

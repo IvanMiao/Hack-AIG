@@ -200,6 +200,19 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
 #outcome[data-kind="victory"] h2 { text-shadow: 0 0 36px var(--accent); }
 #outcome p { max-width: 60ch; margin: 0 0 10px; color: var(--muted); text-align: center; }
 #outcome .actions { pointer-events: auto; }
+#outcome .lineage-line { margin: 0; color: var(--bone); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
+.share-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; pointer-events: auto; }
+.share-code { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; color: var(--bone); background: rgba(9, 11, 18, 0.86); border: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent); border-radius: 4px; font-size: 15px; letter-spacing: 0.2em; }
+.share-code code { font-family: inherit; }
+#share-btn { min-width: 200px; border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+#share-btn[data-state="copied"] { color: var(--bone); border-color: var(--accent); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 30%, transparent); }
+.hunt { display: flex; flex-direction: column; align-items: center; gap: 6px; width: min(680px, 94vw); margin-top: 6px; }
+.hunt label { color: var(--muted); font-size: 11px; letter-spacing: 0.1em; }
+.hunt-row { display: flex; gap: 8px; }
+#hunt-code { width: 12ch; min-height: 44px; padding: 0 12px; color: var(--bone); background: rgba(9, 11, 18, 0.86); border: 1px solid var(--border); border-radius: 4px; outline: none; font-size: 15px; letter-spacing: 0.18em; text-transform: uppercase; text-align: center; }
+#hunt-code::placeholder { color: #aaa8b3; opacity: 1; letter-spacing: 0.18em; }
+#hunt-code:focus { border-color: var(--accent); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 24%, transparent); }
+#hunt-btn { min-width: 120px; }
 
 @keyframes rune-orbit { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }

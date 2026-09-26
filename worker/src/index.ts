@@ -26,7 +26,16 @@ export default {
         const incantation = body?.incantation?.trim() ?? "";
         if (incantation.length < 4) return error(400, "incantation too short", cors);
         if (incantation.length > MAX_INCANTATION_CHARS) return error(400, "incantation too long", cors);
-        return json(await forgeNemesis(env, incantation), {}, cors);
+        const forged = await forgeNemesis(env, incantation);
+        return json({ ...forged, lineage: await getLineage(env, forged.spec.code) }, {}, cors);
+      }
+
+      const nemesisMatch = /^\/nemesis\/([A-Za-z0-9-]{4,16})$/.exec(path);
+      if (nemesisMatch && request.method === "GET") {
+        const code = nemesisMatch[1] ?? "";
+        const spec = await loadSpecByCode(env, code);
+        if (!spec) return error(404, "unknown nemesis", cors);
+        return json({ spec, lineage: await getLineage(env, spec.code) }, {}, cors);
       }
 
       if (path === "/forge/asset" && request.method === "POST") {

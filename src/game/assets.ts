@@ -103,7 +103,7 @@ export function instantiate(
             color: colors.glow,
             alphaMap: map,
             transparent: true,
-            opacity: 0.82,
+            opacity: 0.3,
             depthWrite: false,
             blending: THREE.AdditiveBlending,
             side: THREE.DoubleSide,
@@ -116,10 +116,10 @@ export function instantiate(
             map,
             fog: role !== "glow",
             transparent: isFracture,
-            opacity: isFracture ? 0.24 : 1,
+            opacity: isFracture ? 0.14 : 1,
             depthWrite: !isFracture,
             blending: isFracture ? THREE.AdditiveBlending : THREE.NormalBlending,
-            toneMapped: role === "glow",
+            toneMapped: false,
           });
         }
       } else {

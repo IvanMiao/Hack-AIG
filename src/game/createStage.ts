@@ -19,6 +19,15 @@ export interface Stage {
 
 export const ARENA_RADIUS = 9;
 
+const BOSS_HEIGHTS: Record<NemesisSpec["identity"]["silhouette"], number> = {
+  colossus: 4.5,
+  hound: 2.1,
+  seraph: 3.7,
+  serpent: 3.4,
+  knight: 3.5,
+  swarm: 3.2,
+};
+
 function disposeAssetLibrary(library: AssetLibrary): void {
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
@@ -86,6 +95,8 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.3;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x030309);
@@ -179,12 +190,14 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const embers = new THREE.Points(emberGeometry, emberMaterial);
   scene.add(embers);
 
-  const hemisphere = new THREE.HemisphereLight(0x8994c5, 0x100d17, 1.6);
-  const key = new THREE.DirectionalLight(0xf1e8db, 2.4);
-  key.position.set(6, 12, 4);
-  const rim = new THREE.PointLight(accent, 65, 70);
-  rim.position.set(0, 7, -8);
-  scene.add(hemisphere, key, rim);
+  const hemisphere = new THREE.HemisphereLight(0xaab8df, 0x251e32, 2.4);
+  const key = new THREE.DirectionalLight(0xf1e8db, 4.5);
+  key.position.set(2, 11, 8);
+  key.target.position.set(0, 1, 0);
+  const rim = new THREE.DirectionalLight(accent, 3.2);
+  rim.position.set(0, 8, -13);
+  rim.target.position.set(0, 1, -1);
+  scene.add(hemisphere, key, key.target, rim, rim.target);
 
   const arenaRoot = new THREE.Group();
   arenaRoot.name = "Arena";
@@ -236,6 +249,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   let bossMixer: THREE.AnimationMixer | null = null;
   let playerLean: THREE.Group | null = null;
   let runeGroup: THREE.Group | null = null;
+  let sigilMaterial: THREE.MeshBasicMaterial | null = null;
   let bossSpawn = 1;
   let attractAngle = 0;
 
@@ -249,9 +263,13 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     runes.name = "Rotating sigil";
     visual.add(runes);
     const runeMeshes: THREE.Object3D[] = [];
+    sigilMaterial = null;
     visual.traverse((object) => {
       const name = object.name.toLowerCase();
       if (object !== runes && (name.includes("runic") || name.includes("sigil"))) runeMeshes.push(object);
+      if (name.includes("sigil") && object instanceof THREE.Mesh && object.material instanceof THREE.MeshBasicMaterial) {
+        sigilMaterial = object.material;
+      }
     });
     for (const object of runeMeshes) runes.attach(object);
     runeGroup = runes;
@@ -369,9 +387,12 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       camera.position.lerp(desired, 1 - Math.exp(-step * 2.4));
       camera.lookAt(0, 1.2, 0);
     } else {
-      desired.copy(player.position).addScaledVector(toBoss, -4.2).add(right.multiplyScalar(1.2)).setY(2.6);
+      desired.copy(player.position).addScaledVector(toBoss, -5.6).add(right.multiplyScalar(1.9)).setY(3.3);
       camera.position.lerp(desired, 1 - Math.exp(-step * 8));
-      camera.lookAt(boss.position.x, 1.8, boss.position.z);
+      const focusHeight = currentSpec
+        ? THREE.MathUtils.clamp(BOSS_HEIGHTS[currentSpec.identity.silhouette] * (2 / 3), 1.35, 2.8)
+        : 2;
+      camera.lookAt(boss.position.x, boss.position.y + focusHeight, boss.position.z);
     }
     skyDome.position.copy(camera.position);
 
@@ -398,6 +419,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       runeGroup.rotation.y = reducedMotion.matches ? 0 : elapsed * 0.08;
       runeGroup.scale.setScalar(reducedMotion.matches ? 1 : 1 + Math.sin(elapsed * 1.3) * 0.018);
     }
+    if (sigilMaterial) sigilMaterial.opacity = reducedMotion.matches ? 0.3 : 0.3 + Math.sin(elapsed * 0.72) * 0.08;
     playerShadow.position.x = player.position.x;
     playerShadow.position.z = player.position.z;
     bossShadow.position.x = boss.position.x;

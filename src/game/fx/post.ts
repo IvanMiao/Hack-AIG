@@ -38,7 +38,7 @@ export const DEFAULT_POST: PostSettings = {
 };
 
 /** Look of a fully collapsed `flatline` phase: chunky pixels, few colours, washed out, a little too much bleed. */
-const FLAT_LOOK = { pixelate: 6, posterize: 6, saturation: -0.3, grain: 0.05, aberration: 0.0025 };
+const FLAT_LOOK = { pixelate: 6, posterize: 6, saturation: -0.3, grain: -0.03, aberration: 0.0012 };
 
 const GRADE_FRAG = /* glsl */ `
 uniform sampler2D tDiffuse;
@@ -76,14 +76,14 @@ void main() {
   float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
   col = mix(vec3(luma), col, 1.0 + uSaturation - uPulse * 0.45);
 
-  if (uPosterize > 0.5) col = floor(col * uPosterize + 0.5) / uPosterize;
-
   float vig = smoothstep(0.95, 0.25, r * (1.0 + uVignette * 0.6));
   col *= mix(1.0, vig, uVignette);
   col = mix(col, col + uPulseColor * (r * r * 1.4), uPulse * 0.55);
 
   float g = (hash(uv * uResolution) - 0.5) * uGrain;
   col += g * (0.6 + 0.4 * (1.0 - luma));
+  // Posterize last so grain and vignette snap to the same few colour steps instead of speckling over them.
+  if (uPosterize > 0.5) col = floor(col * uPosterize + 0.5) / uPosterize;
   col = mix(col, vec3(1.0), uWhite);
   gl_FragColor = vec4(col, 1.0);
 }
@@ -168,7 +168,7 @@ export function createPostFX(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
       bloom.threshold = settings.bloomThreshold;
       u.uTime.value = time;
       u.uVignette.value = settings.vignette;
-      u.uGrain.value = settings.grain + FLAT_LOOK.grain * flat;
+      u.uGrain.value = Math.max(0, settings.grain + FLAT_LOOK.grain * flat);
       u.uAberration.value = settings.aberration + FLAT_LOOK.aberration * flat;
       u.uSaturation.value = settings.saturation + FLAT_LOOK.saturation * flat;
       u.uPulse.value = pulse * pulse;

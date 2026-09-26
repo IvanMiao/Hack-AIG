@@ -1,16 +1,46 @@
-export interface MoveInput { x: number; z: number }
+import type { PlayerInput } from "../sim";
 
-export function createKeyboardInput(): { read(): MoveInput; dispose(): void } {
+/** Keyboard + mouse → sim input. Attack/roll are edge-triggered so a held key fires once per press. */
+export function createCombatInput(canvas: HTMLCanvasElement): { read(): PlayerInput; dispose(): void } {
   const held = new Set<string>();
-  const down = (e: KeyboardEvent) => held.add(e.code);
+  const pressed = new Set<string>();
+  const down = (e: KeyboardEvent) => {
+    if (e.repeat) return;
+    if (["Space", "ShiftLeft", "ShiftRight", "Tab"].includes(e.code)) e.preventDefault();
+    held.add(e.code);
+    pressed.add(e.code);
+  };
   const up = (e: KeyboardEvent) => held.delete(e.code);
+  const mouse = (e: MouseEvent) => {
+    e.preventDefault();
+    pressed.add(e.button === 2 ? "MouseHeavy" : "MouseLight");
+  };
+  const noMenu = (e: Event) => e.preventDefault();
   window.addEventListener("keydown", down);
   window.addEventListener("keyup", up);
+  canvas.addEventListener("mousedown", mouse);
+  canvas.addEventListener("contextmenu", noMenu);
+  const has = (...codes: string[]) => codes.some((c) => held.has(c));
+  const take = (...codes: string[]) => {
+    const hit = codes.some((c) => pressed.has(c));
+    for (const c of codes) pressed.delete(c);
+    return hit;
+  };
   return {
     read: () => ({
-      x: (held.has("KeyD") || held.has("ArrowRight") ? 1 : 0) - (held.has("KeyA") || held.has("ArrowLeft") ? 1 : 0),
-      z: (held.has("KeyW") || held.has("ArrowUp") ? 1 : 0) - (held.has("KeyS") || held.has("ArrowDown") ? 1 : 0),
+      move: {
+        x: (has("KeyD", "ArrowRight") ? 1 : 0) - (has("KeyA", "ArrowLeft") ? 1 : 0),
+        z: (has("KeyW", "ArrowUp") ? 1 : 0) - (has("KeyS", "ArrowDown") ? 1 : 0),
+      },
+      light: take("KeyJ", "MouseLight"),
+      heavy: take("KeyK", "MouseHeavy"),
+      roll: take("Space", "ShiftLeft", "ShiftRight"),
     }),
-    dispose: () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); },
+    dispose: () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      canvas.removeEventListener("mousedown", mouse);
+      canvas.removeEventListener("contextmenu", noMenu);
+    },
   };
 }

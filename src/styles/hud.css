@@ -41,4 +41,17 @@ button:disabled { opacity: 0.4; cursor: wait; }
 .bar.stamina { height: 5px; margin-top: 4px; }
 .bar.stamina > div { background: #c8f56a; box-shadow: 0 0 8px #c8f56a; }
 .subtitle { position: absolute; left: 50%; bottom: 16vh; transform: translateX(-50%); font-size: 20px; letter-spacing: 0.05em;
-  text-shadow: 0 2px 8px #000; white-space: nowrap; }
+  text-shadow: 0 2px 8px #000; white-space: nowrap; opacity: 0; transition: opacity 0.4s; }
+.subtitle.visible { opacity: 1; }
+.controls { position: absolute; right: 3vw; bottom: 3vh; margin: 0; font-size: 12px; opacity: 0.45; letter-spacing: 0.1em; }
+#hit-vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 40, 70, 0.55) 100%); }
+#hit-vignette.flash { animation: vignette 0.45s ease-out; }
+@keyframes vignette { 0% { opacity: 1; } 100% { opacity: 0; } }
+#outcome { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: rgba(0, 0, 0, 0.55); animation: fade-in 1.2s ease-out; }
+#outcome h2 { font-family: var(--font-display); font-size: clamp(40px, 8vw, 96px); letter-spacing: 0.3em; margin: 0; }
+#outcome[data-kind="death"] h2 { color: #c8102e; text-shadow: 0 0 40px rgba(200, 16, 46, 0.6); }
+#outcome[data-kind="victory"] h2 { color: var(--bone); text-shadow: 0 0 40px var(--accent); }
+#outcome p { max-width: 60ch; text-align: center; opacity: 0.8; margin: 0 0 12px; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }

@@ -4,7 +4,9 @@ import { blockedByObstacle, createBattle, IDLE_INPUT } from "./battle";
 import { FALLBACK_SPECS } from "../spec/fallback";
 import { AVERAGE_BOT, calibrateDifficulty, DIFFICULTY_BAND, measureDifficulty, simulateBattle } from "./bot";
 import { overlaps } from "./hazard";
-import { ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, PLAYER, PLAYER_EDGE_MARGIN } from "./constants";
+import { ARENA_MUTATOR, ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, PLAYER, PLAYER_EDGE_MARGIN } from "./constants";
+import { mutatorForElement } from "./arena";
+import type { Element } from "../spec";
 import { add, dist, len, norm, sub } from "./vec";
 import type { PlayerInput } from "./types";
 
@@ -272,5 +274,86 @@ describe("pillars", () => {
     expect(report.bossWinRate).toBeLessThanOrEqual(DIFFICULTY_BAND.max);
     const a = simulateBattle(pillared(), 9);
     expect(a).toEqual(simulateBattle(pillared(), 9));
+  });
+});
+
+describe("arena mutators", () => {
+  const withElement = (element: Element): NemesisSpec => {
+    const s = structuredClone(spec);
+    s.identity.element = element;
+    return s;
+  };
+
+  it("derives the mutator from the element", () => {
+    expect(mutatorForElement("fire")).toBe("ember");
+    expect(mutatorForElement("storm")).toBe("tempest");
+    expect(mutatorForElement("blood")).toBe("bloodtide");
+    expect(mutatorForElement("ice")).toBe("none");
+    expect(createBattle(withElement("void"), 1).state.arena.mutator).toBe("none");
+  });
+
+  it("ember opens telegraphed vents away from the player that burn only once armed", () => {
+    const b = createBattle(withElement("fire"), 4);
+    b.debug.bossAi = false;
+    const ember = ARENA_MUTATOR.ember;
+    const events = run(b, IDLE_INPUT, ember.periodMs * 0.6 + 50);
+    expect(events.filter((e) => e.type === "arenaPulse" && e.mutator === "ember")).toHaveLength(ember.count);
+    const vents = b.state.hazards.filter((h) => h.source === "arena");
+    expect(vents).toHaveLength(ember.count);
+    for (const v of vents) {
+      expect(v.armT).toBeGreaterThan(0);
+      expect(v.shape.kind === "circle" && dist(v.shape.center, b.state.player.pos)).toBeGreaterThanOrEqual(ember.safeRadius - 1e-6);
+    }
+    const vent = vents[0]!;
+    if (vent.shape.kind !== "circle") throw new Error("vent must be a circle");
+    b.state.player.pos = { ...vent.shape.center };
+    const arming = run(b, IDLE_INPUT, ember.armMs - 100);
+    expect(arming.some((e) => e.type === "playerHit")).toBe(false);
+    const burning = run(b, IDLE_INPUT, 400);
+    const hit = burning.find((e) => e.type === "playerHit");
+    expect(hit && hit.type === "playerHit" && hit.move).toBe("arena");
+    expect(b.state.log.hitsTaken.arena).toBe(1);
+  });
+
+  it("tempest drags the player and drops a bolt on their position", () => {
+    const b = createBattle(withElement("storm"), 6);
+    b.debug.bossAi = false;
+    expect(len(b.state.arena.wind)).toBeCloseTo(ARENA_MUTATOR.tempest.windSpeed, 6);
+    const start = { ...b.state.player.pos };
+    run(b, IDLE_INPUT, 1000);
+    expect(dist(start, b.state.player.pos)).toBeCloseTo(ARENA_MUTATOR.tempest.windSpeed, 1);
+    const events = run(b, IDLE_INPUT, ARENA_MUTATOR.tempest.boltPeriodMs * 0.6 - 900);
+    const bolt = events.find((e) => e.type === "arenaPulse" && e.mutator === "tempest");
+    expect(bolt).toBeDefined();
+    const hazard = b.state.hazards.find((h) => h.source === "arena");
+    expect(hazard?.repeat).toBe(false);
+    expect(hazard?.armMs).toBe(ARENA_MUTATOR.tempest.boltArmMs);
+  });
+
+  it("bloodtide leaves a pool where a boss strike lands and it can be the killer", () => {
+    const b = createBattle(withElement("blood"), 2);
+    b.debug.bossAi = false;
+    b.state.boss.pos = { x: 0, z: 3 };
+    expect(b.debug.forceMove("sweep")).toBe(true);
+    const events = run(b, IDLE_INPUT, 2500);
+    expect(events.some((e) => e.type === "playerHit" && e.move === "sweep")).toBe(true);
+    const pool = b.state.hazards.find((h) => h.source === "arena");
+    expect(pool?.repeat).toBe(true);
+    expect(pool && pool.shape.kind === "circle" && dist(pool.shape.center, b.state.player.pos)).toBeLessThan(0.01);
+    b.state.player.hp = 1;
+    run(b, IDLE_INPUT, ARENA_MUTATOR.bloodtide.armMs + 200);
+    expect(b.state.outcome).toBe("playerDead");
+    expect(b.state.log.killedBy).toBe("arena");
+  });
+
+  it("every mutator is deterministic and only ever tilts the fallback boss harder, within the band's ceiling", () => {
+    const baseline = measureDifficulty(withElement("void"), 24, AVERAGE_BOT).bossWinRate;
+    for (const element of ["fire", "storm", "blood"] as const) {
+      const s = withElement(element);
+      expect(simulateBattle(s, 21)).toEqual(simulateBattle(s, 21));
+      const report = measureDifficulty(s, 24, AVERAGE_BOT);
+      expect(report.bossWinRate, element).toBeGreaterThanOrEqual(baseline - 0.1);
+      expect(report.bossWinRate, element).toBeLessThanOrEqual(DIFFICULTY_BAND.max);
+    }
   });
 });

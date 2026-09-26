@@ -4,6 +4,7 @@ import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
 import type { ArenaState, BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, HazardSource, Obstacle, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
 import { add, clampToDisc, dist, dot, len, norm, perp, rotate, scale, sub, vec } from "./vec";
+import { initialMutatorT, initialWind, mutatorForElement, onPlayerWounded, stepMutator } from "./arena";
 
 /** Lab-only switches. All default off; the shipped game never touches them. */
 export interface BattleDebug {
@@ -41,7 +42,11 @@ const emptyLog = (): DeathLog => ({
 });
 
 export function createInitialState(spec: NemesisSpec, seed: number): BattleState {
-  const arena: ArenaState = { radius: ARENA_RADIUS, targetRadius: ARENA_RADIUS, shrinkFrom: ARENA_RADIUS, shrinkT: 0, shrinkMs: 0, obstacles: [] };
+  const mutator = mutatorForElement(spec.identity.element);
+  const arena: ArenaState = {
+    radius: ARENA_RADIUS, targetRadius: ARENA_RADIUS, shrinkFrom: ARENA_RADIUS, shrinkT: 0, shrinkMs: 0, obstacles: [],
+    mutator, mutatorT: initialMutatorT(mutator), wind: initialWind(mutator, createRng(seed ^ 0x5bd1e995)),
+  };
   const state: BattleState = {
     seed,
     arena,
@@ -180,6 +185,8 @@ export function moveTiming(type: MoveType): { activeMs: number; recoverMs: numbe
 export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const state = createInitialState(spec, seed);
   const rng: Rng = createRng(seed);
+  /** Arena pulses draw from their own stream so weather never reshuffles the boss's move choices. */
+  const arenaRng: Rng = createRng(seed ^ 0x5bd1e995);
   const pendingEvents: BattleEvent[] = [];
   const tickAttack = (attack: typeof PLAYER.light | typeof PLAYER.heavy) => attack.windupMs + attack.activeMs + attack.recoverMs;
   const bossLimit = () => state.arena.radius - BOSS.radius - BOSS_EDGE_MARGIN;
@@ -260,6 +267,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       if (p.actionT >= tickAttack(attack)) p.action = "idle";
     }
 
+    if (state.arena.mutator === "tempest") p.pos = add(p.pos, state.arena.wind, TICK_MS / 1000);
     p.pos = clampToDisc(separateFromObstacles(p.pos, PLAYER.radius, state.arena.obstacles), state.arena.radius - PLAYER_EDGE_MARGIN);
     p.staminaRegenDelay = Math.max(0, p.staminaRegenDelay - TICK_MS);
     if (p.staminaRegenDelay === 0 && p.action !== "roll") p.stamina = Math.min(PLAYER.maxStamina, p.stamina + (PLAYER.staminaRegenPerSec * TICK_MS) / 1000);
@@ -275,7 +283,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
 
   const playerInvulnerable = () => state.player.action === "roll" && state.player.actionT <= PLAYER.roll.iframeMs;
 
-  const hurtPlayer = (damage: number, source: MoveType, events: BattleEvent[]) => {
+  const hurtPlayer = (damage: number, source: HazardSource, events: BattleEvent[]) => {
     const p = state.player;
     if (state.outcome !== "fighting") return;
     if (playerInvulnerable()) {
@@ -287,6 +295,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     p.hitFlash = 200;
     state.log.hitsTaken[source] = (state.log.hitsTaken[source] ?? 0) + 1;
     events.push({ type: "playerHit", move: source, damage, hp: p.hp });
+    onPlayerWounded(state, source, spawnArenaHazard, events);
     if (p.hp <= 0) {
       state.outcome = "playerDead";
       state.log.killedBy = source;
@@ -350,11 +359,12 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     events.push({ type: "telegraph", move: move.type, ms: telegraphMs });
   };
 
-  const spawnHazard = (source: MoveType, shape: Hazard["shape"], damage: number, ttl: number, repeat = false): Hazard => {
-    const hazard: Hazard = { id: state.nextId++, source, shape, damage, ttl, cooldown: 0, repeat, hit: false };
+  const spawnHazard = (source: HazardSource, shape: Hazard["shape"], damage: number, ttl: number, repeat = false, armMs = 0): Hazard => {
+    const hazard: Hazard = { id: state.nextId++, source, shape, damage, ttl, cooldown: 0, repeat, hit: false, armMs, armT: armMs };
     state.hazards.push(hazard);
     return hazard;
   };
+  const spawnArenaHazard = (shape: HazardShape, damage: number, ttl: number, repeat: boolean, armMs: number) => spawnHazard("arena", shape, damage, ttl, repeat, armMs);
 
   const activateMove = (current: BossMove, events: BattleEvent[]) => {
     const b = state.boss;
@@ -517,7 +527,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     for (const raw of state.hazards) {
       const h = advanceHazard(raw, TICK_MS);
       if (h.ttl <= 0) continue;
-      const canHit = h.repeat ? h.cooldown <= 0 : !h.hit;
+      const canHit = h.armT <= 0 && (h.repeat ? h.cooldown <= 0 : !h.hit);
       if (canHit && overlaps(h.shape, p.pos, PLAYER.radius)) {
         // A dodged swing is spent: rolling through the front of a hitbox never gets clipped by its tail.
         h.hit = true;
@@ -554,6 +564,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     if (pendingEvents.length > 0) events.push(...pendingEvents.splice(0));
     state.timeMs += TICK_MS;
     stepArena(state, events);
+    stepMutator(state, TICK_MS, arenaRng, spawnArenaHazard, events);
     stepPlayer(input, events);
     if (state.outcome !== "fighting") return events;
     stepBoss(events);

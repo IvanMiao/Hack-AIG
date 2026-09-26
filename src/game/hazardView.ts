@@ -410,13 +410,19 @@ export function createHazardView(scene: THREE.Scene) {
       }
     }
     for (const h of state.hazards) {
+      if (h.armT > 0) {
+        // Arena pulses telegraph like boss moves: a filling decal that only becomes a hazard once armed.
+        const u = 1 - h.armT / h.armMs;
+        place(h.shape, u, 0, 0, 0.5 + 0.5 * u);
+        continue;
+      }
       if (!seenHazards.has(h.id)) {
         seenHazards.add(h.id);
         if (h.source !== "ring") spawnCrack(h.shape);
       }
       if (h.repeat) {
         const pulse = 0.5 + 0.5 * Math.sin(state.timeMs / 140);
-        const settle = Math.min(1, (MOVE.zone.ttlMs - h.ttl) / 260);
+        const settle = Math.min(1, Math.max(0, MOVE.zone.ttlMs - h.ttl) / 260);
         place(h.shape, 0, 1 - settle, pulse, 0.9);
       } else {
         const life = Math.min(1, h.ttl / 220);

@@ -1,5 +1,6 @@
 import type { NemesisSpec } from "../spec";
 import { blockedByObstacle, createBattle, IDLE_INPUT } from "./battle";
+import { overlaps } from "./hazard";
 import { BOSS, PLAYER } from "./constants";
 import { createRng } from "./rng";
 import type { BattleEvent, BattleState, DeathLog, Outcome, PlayerInput } from "./types";
@@ -72,6 +73,13 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
     const d = dist(p.pos, b.pos) - BOSS.radius;
     const current = b.current;
     const input: PlayerInput = { ...IDLE_INPUT, move: vec() };
+
+    // Standing in (or under) an arena pulse: step off it first, weather beats everything else.
+    for (const h of s.hazards) {
+      if (h.source !== "arena" || h.shape.kind !== "circle" || !overlaps(h.shape, p.pos, PLAYER.radius + 0.7)) continue;
+      input.move = norm(sub(p.pos, h.shape.center), perp(toBoss));
+      return input;
+    }
 
     // Volley telegraphed and cover nearby: duck behind the pillar instead of gambling on a sidestep.
     if (current?.phase === "telegraph" && current.move.type === "volley") {

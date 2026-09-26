@@ -973,6 +973,12 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         shake = Math.max(shake, 0.5);
         rimCollapse.collapse(event.from, event.to, event.ms);
       }
+      if (event.type === "arenaPulse" && fxOn) {
+        burstAt.set(event.at.x, 0.3, event.at.z);
+        if (event.mutator === "ember") particles.burst(burstAt, { count: 40, color: 0xff6a2b, color2: 0x3a0a02, speed: 3.5, spread: 0.6, dir: UP, lifeMs: 900, size: 0.16, gravity: -2, drag: 1.2 });
+        else if (event.mutator === "tempest") particles.burst(burstAt, { count: 30, color: 0xcfe9ff, color2: accent, speed: 6, spread: 0.5, dir: UP, lifeMs: 500, size: 0.1, gravity: 4, drag: 2.5, stretch: 3 });
+        else particles.burst(burstAt, { count: 24, color: 0x8a0a1c, color2: 0x1a0205, speed: 2, spread: 1, lifeMs: 800, size: 0.2, gravity: 6, drag: 2 });
+      }
       if (event.type === "obstaclesRaised") shake = Math.max(shake, 0.3);
       if (event.type === "obstacleBroken") shake = Math.max(shake, 0.28);
       if (event.type === "bossStagger" && fxOn) {

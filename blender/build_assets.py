@@ -97,6 +97,8 @@ def image_for(texture_id, normal=False):
             alpha=False,
         )
         image.pixels.foreach_set(scaled.pixels[:])
+        # Generated images have no file behind them; the glTF exporter writes them as solid black unless packed.
+        image.pack()
         bpy.data.images.remove(scaled)
     else:
         image = source

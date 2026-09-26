@@ -9,6 +9,7 @@ import serpentUrl from "../assets/models/boss_serpent.glb?url";
 import knightUrl from "../assets/models/boss_knight.glb?url";
 import swarmUrl from "../assets/models/boss_swarm.glb?url";
 import { addOutline, createToonMaterial } from "./materials";
+import { repairBlankTextures } from "./textureRepair";
 import type { Silhouette } from "../spec/types";
 
 export type MaterialRole =
@@ -46,6 +47,8 @@ export interface AssetLibrary {
 export async function loadAssetLibrary(): Promise<AssetLibrary> {
   const loader = new GLTFLoader();
   const [arena, player] = await Promise.all([loader.loadAsync(arenaUrl), loader.loadAsync(playerUrl)]);
+  repairBlankTextures(arena);
+  repairBlankTextures(player);
   const bosses: Partial<Record<Silhouette, GLTF>> = {};
   const pending = new Map<Silhouette, Promise<GLTF>>();
   const loadBoss = (silhouette: Silhouette, onProgress?: (fraction: number) => void): Promise<GLTF> => {
@@ -61,6 +64,7 @@ export async function loadAssetLibrary(): Promise<AssetLibrary> {
           if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total));
         })
         .then((gltf) => {
+          repairBlankTextures(gltf);
           bosses[silhouette] = gltf;
           pending.delete(silhouette);
           onProgress?.(1);

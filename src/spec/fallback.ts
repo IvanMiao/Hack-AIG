@@ -37,7 +37,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
       },
       {
         hpThreshold: 0.5,
-        rule: "rift_beat",
+        rule: "pillars",
         moves: [
           { type: "volley", telegraphMs: 600, damage: 11, scale: 1.1, count: 9 },
           { type: "zone", telegraphMs: 1000, damage: 17, scale: 1, count: 8 },

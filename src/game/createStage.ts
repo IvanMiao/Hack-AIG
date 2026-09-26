@@ -6,7 +6,7 @@ import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
-import { Locomotion } from "./locomotion";
+import { attackFraction, Locomotion, type Overlay } from "./locomotion";
 import type { NemesisSpec } from "../spec";
 import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
@@ -194,6 +194,48 @@ function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number): Bos
   }
   lerpBossPose(out, strike, BOSS_REST, holdThenEase(u, 0.35));
   return out;
+}
+
+/**
+ * Which authored player clip to layer this frame and where to scrub it. Attacks map the sim's windup/active/
+ * recover windows onto the shared attack layout (the strike snaps in the first half of the active window, like
+ * the procedural blade); the hit flinch rides the hit-flash timer; death plays once and holds its last frame.
+ */
+function playerOverlayFor(motion: Locomotion, p: BattleState["player"], deathSeconds: number): Overlay | null {
+  if (deathSeconds > 0 && motion.hasClip("death")) return { clip: "death", seconds: deathSeconds };
+  if (p.action === "light" || p.action === "heavy") {
+    if (!motion.hasClip(p.action)) return null;
+    const attack = p.action === "light" ? PLAYER.light : PLAYER.heavy;
+    if (p.actionT < attack.windupMs) return { clip: p.action, fraction: attackFraction("windup", p.actionT / attack.windupMs) };
+    const activeT = p.actionT - attack.windupMs;
+    if (activeT < attack.activeMs) return { clip: p.action, fraction: attackFraction("active", (activeT / attack.activeMs) * 2) };
+    return { clip: p.action, fraction: attackFraction("recover", (activeT - attack.activeMs) / attack.recoverMs) };
+  }
+  if (p.action === "idle" && p.hitFlash > 0 && motion.hasClip("hit")) return { clip: "hit", fraction: 1 - p.hitFlash / 200 };
+  return null;
+}
+
+/**
+ * Boss counterpart: death > stagger (loops) > current move (telegraph/active/recover scrubbed onto the attack
+ * layout; ranged moves have no active window so contact snaps at the start of recovery) > hit flinch.
+ */
+function bossOverlayFor(motion: Locomotion, boss: BattleState["boss"], outcome: BattleState["outcome"], deathSeconds: number): Overlay | null {
+  if (outcome === "bossDead" && motion.hasClip("death")) return { clip: "death", seconds: deathSeconds };
+  if (boss.staggerT > 0 && motion.hasClip("stagger")) return { clip: "stagger" };
+  const current = boss.current;
+  if (current) {
+    const melee = current.move.type === "sweep" || current.move.type === "thrust" || current.move.type === "nova" || current.move.type === "charge";
+    const clip = melee ? "attack_melee" : "attack_ranged";
+    if (!motion.hasClip(clip)) return null;
+    const timing = moveTiming(current.move.type);
+    if (current.phase === "telegraph") return { clip, fraction: attackFraction("windup", current.t / current.telegraphMs) };
+    if (current.phase === "active") return { clip, fraction: attackFraction("active", timing.activeMs > 0 ? current.t / timing.activeMs : 1) };
+    const u = current.t / timing.recoverMs;
+    if (timing.activeMs === 0 && u < 0.25) return { clip, fraction: attackFraction("active", u / 0.25) };
+    return { clip, fraction: attackFraction("recover", timing.activeMs === 0 ? (u - 0.25) / 0.75 : u) };
+  }
+  if (boss.hitFlash > 0 && motion.hasClip("hit")) return { clip: "hit", fraction: 1 - boss.hitFlash / 120 };
+  return null;
 }
 
 /**
@@ -615,6 +657,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   scene.add(player);
   let bladePivot: THREE.Group | null = null;
   let bladeMaterial: THREE.MeshToonMaterial | null = null;
+  /** Blade parented to the authored `rig_forearm_R` joint: the arm clips carry it, so it stops swinging on its own. */
+  let bladeOnHand = false;
 
   const boss = new THREE.Group();
   const bossVisualPivot = new THREE.Group();
@@ -686,6 +730,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const UP = new THREE.Vector3(0, 1, 0);
   let lastActionT = 0;
   let impactT = 1;
+  let playerDeathT = 0;
+  let bossDeathT = 0;
   let runeGroup: THREE.Group | null = null;
   let sigilMaterial: THREE.MeshBasicMaterial | null = null;
   interface Debris { object: THREE.Object3D; baseY: number; phase: number; spin: THREE.Vector3 }
@@ -767,7 +813,15 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
     playerVisualPivot.add(visual);
     bladePivot = createBlade();
-    playerVisualPivot.add(bladePivot);
+    const hand = visual.getObjectByName("rig_forearm_R");
+    bladeOnHand = hand !== undefined;
+    if (hand) {
+      hand.updateWorldMatrix(true, false);
+      hand.attach(bladePivot);
+      bladePivot.rotation.set(REST_POSE.bladeX, 0, REST_POSE.bladeZ);
+    } else {
+      playerVisualPivot.add(bladePivot);
+    }
     playerMaterials = collectToonMaterials(visual, true);
     playerMotion = new Locomotion(visual, library.player.animations, { referenceSpeed: PLAYER.speed, cycleSeconds: 0.72 });
   };
@@ -992,9 +1046,15 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     bossSpeed = step > 0 ? Math.hypot(boss.position.x - lastBossPosition.x, boss.position.z - lastBossPosition.z) / step : 0;
     lastBossPosition.copy(boss.position);
     const motionStep = step * (reducedMotion.matches ? 0 : 1);
-    playerMotion?.update(motionStep, p.action === "idle" ? playerSpeed : 0);
+    playerDeathT = state.outcome === "playerDead" ? playerDeathT + step : 0;
+    bossDeathT = state.outcome === "bossDead" ? bossDeathT + step : 0;
+    const playerOverlay = playerMotion ? playerOverlayFor(playerMotion, p, playerDeathT) : null;
+    playerMotion?.update(motionStep, p.action === "idle" ? playerSpeed : 0, playerOverlay);
+    const playerAuthored = playerOverlay && playerMotion ? playerMotion.overlayWeight(playerOverlay.clip) : 0;
     resetRig(bossRig);
-    bossMotion?.update(motionStep, bossSpeed);
+    const bossOverlay = bossMotion ? bossOverlayFor(bossMotion, b, state.outcome, bossDeathT) : null;
+    bossMotion?.update(motionStep, bossSpeed, bossOverlay);
+    const bossAuthored = bossOverlay && bossMotion ? bossMotion.overlayWeight(bossOverlay.clip) : 0;
 
     if (p.action === "light") attackPose(pose, p.actionT, PLAYER.light, LIGHT_WINDUP, LIGHT_STRIKE);
     else if (p.action === "heavy") attackPose(pose, p.actionT, PLAYER.heavy, HEAVY_WINDUP, HEAVY_STRIKE);
@@ -1003,8 +1063,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     if (heavyCommit) impactT = 0;
     lastActionT = p.action === "idle" ? 0 : p.actionT;
 
+    // Authored attack clips already lean and twist the spine, so the whole-body pivot yields to them.
     const moveLean = p.action === "idle" && playerSpeed > 0.1 ? 0.1 : 0;
-    poseEuler.set(pose.lean + moveLean, pose.twist, 0);
+    poseEuler.set(pose.lean * (1 - playerAuthored) + moveLean, pose.twist * (1 - playerAuthored), 0);
     poseQuaternion.setFromEuler(poseEuler);
     playerVisualPivot.position.set(0, -pose.crouch, pose.lunge);
     if (p.action === "roll") {
@@ -1022,7 +1083,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       playerVisualPivot.position.set(-rollCentre.x, centreHeight - rollCentre.y, -rollCentre.z);
     }
     playerVisualPivot.quaternion.copy(poseQuaternion);
-    if (bladePivot) bladePivot.rotation.set(pose.bladeX, 0, pose.bladeZ);
+    if (bladePivot && !bladeOnHand) bladePivot.rotation.set(pose.bladeX, 0, pose.bladeZ);
     if (bladeMaterial) bladeMaterial.emissive.copy(accent).multiplyScalar(pose.charge * 0.9);
 
     const heavy = p.action === "heavy";
@@ -1051,7 +1112,10 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     const reveal = 1 - Math.pow(1 - bossSpawn, 3);
     const spawnScale = 0.08 + bossSpawn * 0.92;
     bossVisualPivot.scale.set(bossPoseNow.stretch * spawnScale, bossPoseNow.squash * spawnScale, bossPoseNow.stretch * spawnScale);
-    bossVisualPivot.rotation.x = bossPoseNow.lean;
+    // Authored boss clips carry their own torso lean and limb swing; the procedural rig offsets fade out under them.
+    bossVisualPivot.rotation.x = bossPoseNow.lean * (1 - bossAuthored);
+    bossPoseNow.swing *= 1 - bossAuthored;
+    bossPoseNow.headTilt *= 1 - bossAuthored;
     bossVisualPivot.position.z = bossPoseNow.lunge;
     bossVisualPivot.position.y = -2.1 * (1 - reveal) + bossPoseNow.rise + (b.invulnerableT > 0 ? Math.sin(state.timeMs / 90) * 0.15 + 0.4 : 0);
     if (bossRig.strike) {

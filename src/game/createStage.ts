@@ -2,11 +2,13 @@ import * as THREE from "three";
 import { addOutline, createToonMaterial, RIM } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
+import { createHFHero, type HFHero } from "./hfHero";
+import { createCodexBoss, type CodexBoss } from "./codexBoss";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
-import type { NemesisSpec } from "../spec";
+import { isCodexBout, type NemesisSpec } from "../spec";
 import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
@@ -633,6 +635,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let currentSpec: NemesisSpec | null = null;
   let library: AssetLibrary | null = null;
   let playerMixer: THREE.AnimationMixer | null = null;
+  let hero: HFHero | null = null;
+  let heroMode = false;
+  let codexBoss: CodexBoss | null = null;
   let bossMixer: THREE.AnimationMixer | null = null;
   let playerMaterials: ToonMaterialState[] = [];
   let bossMaterials: ToonMaterialState[] = [];
@@ -735,27 +740,47 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     arenaRoot.add(edgeFade);
   };
 
+  // Attract mode (no spec yet) is the default HF vs CODEX bout, so it gets the mascot too.
+  const wantsHero = () => (currentSpec ? isCodexBout(currentSpec) : true);
+
   const installPlayer = () => {
-    if (!library) return;
+    const useHero = wantsHero();
+    if (!useHero && !library) return;
     playerMixer?.stopAllAction();
+    playerMixer = null;
+    hero = null;
     disposeGroup(playerVisualPivot);
-    const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
+    let visual: THREE.Object3D;
+    if (useHero) {
+      hero = createHFHero();
+      visual = hero.root;
+    } else {
+      visual = instantiate(library!.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
+      playerMixer = new THREE.AnimationMixer(visual);
+      const clip = library!.player.animations[0];
+      if (clip) playerMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+    }
+    heroMode = useHero;
     playerVisualPivot.add(visual);
     bladePivot = createBlade();
     playerVisualPivot.add(bladePivot);
     playerMaterials = collectToonMaterials(visual, true);
-    playerMixer = new THREE.AnimationMixer(visual);
-    const clip = library.player.animations[0];
-    if (clip) playerMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
   };
+  installPlayer();
 
   const installBoss = (spec: NemesisSpec, keepSpawn = false) => {
     const spawnBefore = bossSpawn;
     bossMixer?.stopAllAction();
     disposeGroup(bossVisualPivot);
     bossMaterials = [];
+    codexBoss = null;
     const asset = library?.bosses[spec.identity.silhouette];
-    if (asset) {
+    if (isCodexBout(spec)) {
+      bossRig = EMPTY_RIG;
+      codexBoss = createCodexBoss();
+      bossVisualPivot.add(codexBoss.root);
+      bossMaterials = collectToonMaterials(codexBoss.root);
+    } else if (asset) {
       const visual = instantiate(asset, spec.identity.palette, { outline: 0.024 });
       bossVisualPivot.add(visual);
       bossRig = buildBossRig(visual, spec.identity.silhouette);
@@ -787,7 +812,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
   const preloadBoss = async (spec: NemesisSpec, onProgress?: (fraction: number) => void) => {
     await ready;
-    if (!library || disposed) return;
+    if (!library || disposed || isCodexBout(spec)) return;
     const { silhouette } = spec.identity;
     const hadModel = !!library.bosses[silhouette];
     try {
@@ -828,10 +853,12 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (role === "floor" && object.material instanceof THREE.MeshToonMaterial) object.material.color.set(palette.floor);
     });
     hazards.setAccent(palette.accent);
+    hazards.setStyle(isCodexBout(spec) ? "terminal" : "void");
   };
 
   const applySpec = (spec: NemesisSpec) => {
     currentSpec = spec;
+    if (isCodexBout(spec) !== heroMode) installPlayer();
     applyAccent(spec);
     installBoss(spec);
     if (library && !library.bosses[spec.identity.silhouette]) void preloadBoss(spec);
@@ -996,6 +1023,16 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     playerVisualPivot.quaternion.copy(poseQuaternion);
     if (bladePivot) bladePivot.rotation.set(pose.bladeX, 0, pose.bladeZ);
     if (bladeMaterial) bladeMaterial.emissive.copy(accent).multiplyScalar(pose.charge * 0.9);
+    hero?.update(step, {
+      speed: playerSpeed,
+      action: p.action,
+      actionT: p.actionT,
+      hitFlash: p.hitFlash,
+      bladeX: pose.bladeX,
+      bladeZ: pose.bladeZ,
+      charge: pose.charge,
+      reducedMotion: reducedMotion.matches,
+    });
 
     const heavy = p.action === "heavy";
     slashArc.visible = pose.slash > 0.01;
@@ -1054,6 +1091,18 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         entry.material.emissive.lerp(new THREE.Color(0xffd166), 0.4 + 0.3 * Math.sin(state.timeMs / 60));
       }
     }
+    codexBoss?.update(step, {
+      timeMs: state.timeMs,
+      glow: bossPoseNow.glow,
+      headTilt: bossPoseNow.headTilt,
+      hitFlash: b.hitFlash,
+      weakness: b.weaknessT > 0,
+      staggered: b.staggerT > 0,
+      telegraphing: b.current?.phase === "telegraph",
+      moveType: b.current?.move.type ?? null,
+      phaseIndex: b.phaseIndex,
+      reducedMotion: reducedMotion.matches,
+    });
 
     hazards.sync(state);
     toBoss.subVectors(boss.position, player.position).setY(0);
@@ -1066,7 +1115,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     key.intensity = tuning.lights.key;
     rim.intensity = tuning.lights.rim;
     fill.intensity = tuning.lights.fill;
-    heroLamp.intensity = tuning.lights.heroLamp;
+    heroLamp.intensity = tuning.lights.heroLamp * (heroMode ? 0.45 : 1);
     pool.intensity = tuning.lights.pool;
     pool.distance = tuning.lights.poolRadius * 2.9;
     RIM.strength.value = tuning.rim.strength;

@@ -31,11 +31,11 @@
 :root {
   --ink: #05060a;
   --bone: #e9e4d8;
-  --accent: #7fdcff;
+  --accent: #ffd21e;
   --muted: #b7b5c0;
   --surface: rgba(9, 11, 18, 0.88);
   --border: rgba(233, 228, 216, 0.28);
-  --focus: #baf1ff;
+  --focus: #ffe27a;
   --font-display: "Cinzel", "Georgia", serif;
   --font-body: "IBM Plex Mono", "Menlo", monospace;
   --motion-fast: 150ms;
@@ -53,7 +53,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.primary { background: var(--accent); color: var(--ink); border-color: var(--accent); font-weight: 700; }
 button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, white); color: var(--ink); }
-button:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; box-shadow: 0 0 0 6px rgba(127, 220, 255, 0.16); }
+button:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; box-shadow: 0 0 0 6px rgba(255, 210, 30, 0.16); }
 a { color: var(--accent); }
 .hidden { display: none !important; }
 

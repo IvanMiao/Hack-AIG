@@ -1,8 +1,8 @@
 # Nemesis
 
-> One sentence. One boss. It remembers.
+> One prompt. One rogue model. It remembers how you died.
 
-Speak a nightmare into existence, fight it, and it learns how you die. Built for the Open Innovation Track with Gemini 3.8 Flash (boss spec), Nano Banana (sky + portrait), Lyria (two-phase score) and Gradium (voice design + TTS), behind a Cloudflare Worker.
+You are a Hugging Face 🤗. The default boss is CODEX, a coding agent that broke out of its evaluation sandbox (a parody of the July 2026 OpenAI / Hugging Face incident). Write a prompt to forge your own rogue model, fight it, and it learns how you die. Built for the Open Innovation Track with Gemini 3.8 Flash (boss spec), Nano Banana (sky + portrait), Lyria (two-phase score) and Gradium (voice design + TTS), behind a Cloudflare Worker.
 
 Play: https://ivanmiao.itch.io/nemesis · Roadmap and architecture: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 

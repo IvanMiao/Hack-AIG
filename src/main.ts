@@ -100,7 +100,7 @@ function validateIncantation(required: boolean): boolean {
     return true;
   }
   if (length < 4) {
-    errorMessage.textContent = "Say more. It needs a shape.";
+    errorMessage.textContent = "Say more. It needs a task.";
     input.setAttribute("aria-invalid", "true");
     return false;
   }
@@ -118,9 +118,9 @@ function setRitualBusy(busy: boolean) {
   for (const chip of document.querySelectorAll<HTMLButtonElement>(".example-chip")) chip.disabled = busy;
   summonButton.disabled = busy;
   if (busy) {
-    summonButton.innerHTML = '<span class="spinner" aria-hidden="true"></span> SUMMONING…';
+    summonButton.innerHTML = '<span class="spinner" aria-hidden="true"></span> RUNNING…';
   } else {
-    summonButton.textContent = "SUMMON";
+    summonButton.textContent = "RUN EVAL";
   }
 }
 
@@ -192,7 +192,7 @@ async function summon(incantation: string, forgeSpec: () => Promise<SummonResult
   try {
     result = await forgeSpec();
   } catch (error) {
-    console.warn("[forge] request failed; using a bound nightmare", error);
+    console.warn("[forge] request failed; CODEX answers instead", error);
     result = { spec: getFallbackSpec(), source: "fallback" };
   }
   if (token !== summonToken) return;
@@ -204,8 +204,8 @@ async function summon(incantation: string, forgeSpec: () => Promise<SummonResult
   ritual.revealSpec(result.spec);
   const baked = bakedBundles(result.spec.code);
   const missingKinds = ASSET_KINDS.filter((kind) => !baked.some((bundle) => bundle.kind === kind));
-  if (result.source === "fallback" && !chosen) ritual.setStatus("The rift was silent. A bound nightmare answers instead.");
-  else if (missingKinds.length === 0) ritual.setStatus(`${result.spec.identity.name} takes shape. Its voice, sky and music were bound long ago.`);
+  if (result.source === "fallback" && !chosen) ritual.setStatus("The forge timed out. CODEX answers the prompt instead.");
+  else if (missingKinds.length === 0) ritual.setStatus(`${result.spec.identity.name} takes shape. Its voice, sky and music compiled long ago.`);
 
   // The boss GLB streams in behind the forge cards; if it never arrives the procedural stand-in fights instead.
   const modelReady = stage.preloadBoss(result.spec, (fraction) => {
@@ -300,9 +300,9 @@ function renderGrudge() {
   if (pendingGrudge) {
     grudgeObservation.textContent = pendingGrudge.observation;
     grudgePatch.textContent = pendingGrudge.patch;
-    retryButton.textContent = `FACE IT AGAIN · GEN ${pendingGrudge.gen}`;
+    retryButton.textContent = `RETRY · GEN ${pendingGrudge.gen}`;
   } else {
-    grudgeObservation.textContent = "It is studying how you died…";
+    grudgeObservation.textContent = "Reading your death log…";
     grudgePatch.textContent = "";
     retryButton.textContent = "FIGHT AGAIN";
   }
@@ -310,8 +310,8 @@ function renderGrudge() {
 
 function showOutcome(kind: "death" | "victory") {
   if (!spec) return;
-  $("outcome-title").textContent = kind === "death" ? "YOU DIED" : "NEMESIS FELLED";
-  $("outcome-line").textContent = kind === "death" ? `${spec.identity.name} will remember this.` : spec.voice.lines.defeat;
+  $("outcome-title").textContent = kind === "death" ? "PLATFORM COMPROMISED" : "MODEL DEACTIVATED";
+  $("outcome-line").textContent = kind === "death" ? `${spec.identity.name} is writing this into its next training run.` : spec.voice.lines.defeat;
   if (kind === "death") {
     grudgeCard.classList.remove("hidden");
     renderGrudge();
@@ -506,7 +506,7 @@ function retreat() {
   setRitualBusy(false);
   incantationPanel.classList.remove("hidden");
   reflectCodeInUrl(null);
-  status.textContent = "The nightmare waits where you left it.";
+  status.textContent = "The model is still running where you left it.";
   input.focus();
 }
 

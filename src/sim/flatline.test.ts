@@ -3,7 +3,7 @@ import { CODEX_CODE, getFallbackSpecByCode } from "../spec/fallback";
 import type { NemesisSpec } from "../spec";
 import { createBattle, IDLE_INPUT } from "./battle";
 import { AVERAGE_BOT, DIFFICULTY_BAND, measureDifficulty } from "./bot";
-import { FLAT, PLAYER } from "./constants";
+import { ARENA_PILLARS, FLAT, PLAYER } from "./constants";
 import type { PlayerInput } from "./types";
 
 const codex = getFallbackSpecByCode(CODEX_CODE) as NemesisSpec;
@@ -43,6 +43,16 @@ describe("flatline phase (CODEX-01 phase 2)", () => {
     b.state.player.pos = { x: 0, z: -2 };
     const hit = run(b, { ...IDLE_INPUT, light: true }, 600).find((e) => e.type === "bossHit");
     expect(hit && hit.type === "bossHit" && hit.damage).toBe(Math.round(PLAYER.light.damage * codex.stats.playerDamage!));
+  });
+
+  it("shatters any standing pillars when the arena folds", () => {
+    expect(codex.phases[0]?.rule).toBe("pillars");
+    const b = createBattle(codex, 1);
+    expect(b.state.arena.obstacles.length).toBeGreaterThan(0);
+    b.state.boss.hp = codex.stats.maxHp * 0.49;
+    const events = run(b, IDLE_INPUT, TICK * 2);
+    expect(events.filter((e) => e.type === "obstacleBroken")).toHaveLength(ARENA_PILLARS.count);
+    expect(b.state.arena.obstacles).toEqual([]);
   });
 
   it("collapses both fighters onto the lane and ignores forward/back input", () => {

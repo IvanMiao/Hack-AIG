@@ -81,6 +81,12 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
  */
 export function applyPhaseRule(state: BattleState, phase: Phase, events: BattleEvent[] | null): void {
   const arena = state.arena;
+  if (phase.rule === "flatline") {
+    // Cover from an earlier phase has no place on the lane: it shatters as the arena folds.
+    for (const o of arena.obstacles) events?.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by: "arena" });
+    arena.obstacles = [];
+    return;
+  }
   if (phase.rule === "pillars") {
     const centre = scale(add(state.player.pos, state.boss.pos), 0.5);
     const axis = norm(sub(state.player.pos, state.boss.pos));

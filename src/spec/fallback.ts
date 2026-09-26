@@ -27,7 +27,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     phases: [
       {
         hpThreshold: 1,
-        rule: "none",
+        rule: "pillars",
         moves: [
           { type: "volley", telegraphMs: 800, damage: 10, scale: 0.9, count: 6 },
           { type: "zone", telegraphMs: 1300, damage: 15, scale: 0.9, count: 5 },

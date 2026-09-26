@@ -8,8 +8,8 @@ import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
-import { isCodexBout, type NemesisSpec } from "../spec";
-import { ARENA_FLOOR_RADIUS, ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
+import { isCodexBout, type MoveType, type NemesisSpec } from "../spec";
+import { ARENA_FLOOR_RADIUS, ARENA_RADIUS, BOSS, PLAYER, attackFor, moveTiming, type AttackSpec, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
 /** Everything the lab may retune live. Plain mutable objects so lil-gui can bind to them directly. */
@@ -26,7 +26,31 @@ export interface StageTuning {
   };
   rim: { strength: number; power: number };
   fog: { density: number };
-  camera: { fov: number; distance: number; side: number; height: number; lag: number; shake: number; punch: number };
+  camera: {
+    fov: number;
+    distance: number;
+    side: number;
+    height: number;
+    lag: number;
+    shake: number;
+    punch: number;
+    /** Extra pull-back per world unit of fighter separation past `farGap`, capped by `maxPullBack`. */
+    farGap: number;
+    pullBack: number;
+    maxPullBack: number;
+    /** Look-target smoothing (1/s): higher snaps faster; keeps blink/knockback from whipping the pitch. */
+    lookLag: number;
+    /** Camera kick distance (world units) on a player hit, along the knockback direction. */
+    hitKick: number;
+  };
+  floor: {
+    /** Low-frequency value breakup so the slab is not one flat tone. */
+    breakup: number;
+    /** How much darker the stone apron beyond the playable disc reads. */
+    apron: number;
+    /** Accent hairline marking the playable edge. */
+    ring: number;
+  };
   fx: { particles: boolean; ambient: boolean };
   post: PostSettings;
 }
@@ -42,7 +66,8 @@ export const DEFAULT_TUNING = (): StageTuning => ({
   lights: { hemisphere: 1.35, key: 3.6, rim: 3.4, fill: 1.5, heroLamp: 14, pool: 320, poolRadius: 9 },
   rim: { strength: 0.85, power: 3.2 },
   fog: { density: 0.022 },
-  camera: { fov: 55, distance: 6.8, side: 4.2, height: 4.6, lag: 8, shake: 0.6, punch: 1 },
+  camera: { fov: 55, distance: 6.8, side: 4.2, height: 4.6, lag: 8, shake: 0.6, punch: 1, farGap: 7, pullBack: 0.28, maxPullBack: 3.2, lookLag: 7, hitKick: 0.45 },
+  floor: { breakup: 0.22, apron: 0.38, ring: 0.5 },
   fx: { particles: true, ambient: true },
   post: { ...DEFAULT_POST },
 });
@@ -104,6 +129,17 @@ const LIGHT_WINDUP: PlayerPose = { lean: -0.05, twist: -0.5, lunge: -0.08, crouc
 const LIGHT_STRIKE: PlayerPose = { lean: 0.18, twist: 0.55, lunge: 0.42, crouch: 0.06, bladeX: 0.9, bladeZ: 1.7, slash: 1, charge: 0 };
 const HEAVY_WINDUP: PlayerPose = { lean: -0.2, twist: -0.3, lunge: -0.15, crouch: 0.16, bladeX: -2.5, bladeZ: -0.9, slash: 0, charge: 1 };
 const HEAVY_STRIKE: PlayerPose = { lean: 0.42, twist: 0.15, lunge: 0.6, crouch: 0.1, bladeX: 1.15, bladeZ: 0.25, slash: 1, charge: 0 };
+// Hit 2 answers hit 1 from the other side; hit 3 is a stepping overhead finisher.
+const LIGHT2_WINDUP: PlayerPose = { lean: -0.04, twist: 0.5, lunge: -0.05, crouch: 0.05, bladeX: -0.6, bladeZ: 1.7, slash: 0, charge: 0 };
+const LIGHT2_STRIKE: PlayerPose = { lean: 0.2, twist: -0.55, lunge: 0.45, crouch: 0.06, bladeX: 0.8, bladeZ: -1.6, slash: 1, charge: 0 };
+const LIGHT3_WINDUP: PlayerPose = { lean: -0.16, twist: -0.2, lunge: -0.2, crouch: 0.14, bladeX: -2.2, bladeZ: -0.5, slash: 0, charge: 0.3 };
+const LIGHT3_STRIKE: PlayerPose = { lean: 0.38, twist: 0.1, lunge: 0.7, crouch: 0.12, bladeX: 1.05, bladeZ: 0.3, slash: 1, charge: 0 };
+const LIGHT_POSES: readonly { windup: PlayerPose; strike: PlayerPose }[] = [
+  { windup: LIGHT_WINDUP, strike: LIGHT_STRIKE },
+  { windup: LIGHT2_WINDUP, strike: LIGHT2_STRIKE },
+  { windup: LIGHT3_WINDUP, strike: LIGHT3_STRIKE },
+];
+const HURT_POSE: PlayerPose = { lean: -0.35, twist: 0.25, lunge: -0.25, crouch: 0.1, bladeX: -0.4, bladeZ: -1.2, slash: 0, charge: 0 };
 
 const lerpPose = (out: PlayerPose, a: PlayerPose, b: PlayerPose, t: number): PlayerPose => {
   out.lean = THREE.MathUtils.lerp(a.lean, b.lean, t);
@@ -118,7 +154,7 @@ const lerpPose = (out: PlayerPose, a: PlayerPose, b: PlayerPose, t: number): Pla
 };
 
 /** Anticipate → snap → hold → settle. The strike snaps in the first half of the active window so the hit reads instantly. */
-function attackPose(out: PlayerPose, actionT: number, attack: typeof PLAYER.light | typeof PLAYER.heavy, windup: PlayerPose, strike: PlayerPose): PlayerPose {
+function attackPose(out: PlayerPose, actionT: number, attack: AttackSpec, windup: PlayerPose, strike: PlayerPose): PlayerPose {
   if (actionT < attack.windupMs) return lerpPose(out, REST_POSE, windup, easeOut(actionT / attack.windupMs));
   const activeT = actionT - attack.windupMs;
   if (activeT < attack.activeMs) return lerpPose(out, windup, strike, easeOut((activeT / attack.activeMs) * 2));
@@ -139,13 +175,73 @@ interface BossPose {
   swing: number;
   /** Head tilt: negative = reared back, positive = lunging forward/down. Also drives the swarm's contract/burst. */
   headTilt: number;
+  /** Body yaw about the facing axis (radians): a sweep winds one way and cuts across the other. */
+  twist: number;
 }
 
-const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0, swing: 0, headTilt: 0 };
-const BOSS_COIL: BossPose = { lean: -0.3, lunge: -0.35, rise: 0.4, stretch: 1.06, squash: 1.1, glow: 1, swing: -2.3, headTilt: -0.5 };
-export const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
-const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0, swing: -1.45, headTilt: 0.3 };
-const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0, swing: 0.35, headTilt: 0.6 };
+const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0, swing: 0, headTilt: 0, twist: 0 };
+const BOSS_COIL: BossPose = { lean: -0.3, lunge: -0.35, rise: 0.4, stretch: 1.06, squash: 1.1, glow: 1, swing: -2.3, headTilt: -0.5, twist: 0 };
+/** The farthest-reaching strike pose (the thrust); the arena-fit test keeps this over the stone at the rim clamp. */
+export const BOSS_MELEE_STRIKE: BossPose = { lean: 0.62, lunge: 1.8, rise: -0.2, stretch: 1.04, squash: 0.92, glow: 0, swing: -1.55, headTilt: 0.7, twist: 0 };
+const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0, swing: -1.45, headTilt: 0.3, twist: 0 };
+const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0, swing: 0.35, headTilt: 0.6, twist: 0.2 };
+
+interface MovePerformance {
+  /** Pose held at the end of the telegraph. */
+  coil: BossPose;
+  /** Pose snapped to at commit. */
+  strike: BossPose;
+  /** Pose the strike overshoots into before settling back to rest (melee follow-through). */
+  settle: BossPose;
+}
+
+/**
+ * One coil/strike/settle triplet per move so every attack has its own silhouette:
+ * sweep winds across and cuts through, thrust drops low and spears out, nova leaps and slams, charge leans into the run,
+ * blink folds in and pops out, volley recoils, ring raises then hammers down, zone rears back and casts.
+ */
+const MOVE_PERFORMANCE: Record<MoveType, MovePerformance> = {
+  sweep: {
+    coil: { ...BOSS_COIL, twist: -0.75, swing: -2, lean: -0.2 },
+    strike: { ...BOSS_MELEE_STRIKE, twist: 0.7, swing: -1.35, lean: 0.35, lunge: 0.8, rise: -0.1, stretch: 1.1, squash: 0.9 },
+    settle: { ...BOSS_REST, twist: 0.35, lean: 0.15, lunge: 0.3, swing: -0.6 },
+  },
+  thrust: {
+    coil: { ...BOSS_COIL, rise: -0.15, lean: -0.15, lunge: -0.7, squash: 0.92, stretch: 1.02, swing: -1.9, headTilt: -0.3 },
+    strike: BOSS_MELEE_STRIKE,
+    settle: { ...BOSS_REST, lean: 0.25, lunge: 0.9, swing: -1.1, headTilt: 0.3 },
+  },
+  nova: {
+    coil: { ...BOSS_COIL, rise: 0.95, lunge: -0.1, lean: -0.25, squash: 1.18, stretch: 0.96, swing: -2.6, headTilt: -0.6 },
+    strike: { ...BOSS_MELEE_STRIKE, lean: 0.3, lunge: 0.2, rise: -0.35, stretch: 1.32, squash: 0.72, swing: -0.4, headTilt: 0.8 },
+    settle: { ...BOSS_REST, rise: -0.1, stretch: 1.1, squash: 0.92, swing: -0.2, headTilt: 0.25 },
+  },
+  charge: {
+    coil: { ...BOSS_COIL, lean: -0.42, lunge: -0.5, rise: 0.15, squash: 1.08, swing: -1.6, headTilt: -0.45 },
+    strike: { ...BOSS_MELEE_STRIKE, lean: 0.7, lunge: 0.6, rise: -0.05, stretch: 1.06, squash: 0.94, swing: -1.25, headTilt: 0.6 },
+    settle: { ...BOSS_REST, lean: 0.3, lunge: 0.4, rise: -0.15, squash: 0.94, stretch: 1.06, swing: -0.7 },
+  },
+  blink: {
+    coil: { ...BOSS_COIL, rise: 0.7, lunge: 0, lean: 0, stretch: 0.78, squash: 1.35, swing: -2.8, headTilt: -0.7 },
+    strike: { ...BOSS_RANGED_STRIKE, rise: 0.1, lunge: 0.2, lean: 0.25, stretch: 1.22, squash: 0.86, swing: -1.2, headTilt: 0.5 },
+    settle: { ...BOSS_REST, lunge: 0.1, lean: 0.1, swing: -0.4 },
+  },
+  volley: {
+    coil: { ...BOSS_COIL, lunge: -0.5, lean: -0.36, rise: 0.3, swing: -2.4, headTilt: -0.55 },
+    strike: { ...BOSS_RANGED_STRIKE, lunge: -0.15, lean: -0.05, rise: 0.4, swing: -1.6, headTilt: 0.2, stretch: 1.08 },
+    settle: { ...BOSS_REST, lunge: -0.25, lean: -0.12, swing: -1.2 },
+  },
+  ring: {
+    coil: { ...BOSS_COIL, rise: 0.75, lunge: -0.1, lean: -0.15, squash: 1.16, stretch: 0.98, swing: -2.9, headTilt: -0.5 },
+    strike: { ...BOSS_RANGED_STRIKE, rise: -0.3, lunge: 0.3, lean: 0.45, squash: 0.8, stretch: 1.24, swing: -0.3, headTilt: 0.75 },
+    settle: { ...BOSS_REST, rise: -0.05, lean: 0.15, squash: 0.94, stretch: 1.06, swing: -0.15, headTilt: 0.2 },
+  },
+  zone: {
+    coil: { ...BOSS_COIL, lean: -0.5, lunge: -0.4, rise: 0.5, swing: -2.7, headTilt: -0.7 },
+    strike: { ...BOSS_RANGED_STRIKE, lean: 0.1, lunge: 0.1, rise: 0.6, swing: -1.9, headTilt: 0.15 },
+    settle: { ...BOSS_REST, lean: -0.05, rise: 0.15, swing: -1.5, headTilt: -0.1 },
+  },
+};
 
 const lerpBossPose = (out: BossPose, a: BossPose, b: BossPose, t: number): BossPose => {
   out.lean = THREE.MathUtils.lerp(a.lean, b.lean, t);
@@ -156,23 +252,36 @@ const lerpBossPose = (out: BossPose, a: BossPose, b: BossPose, t: number): BossP
   out.glow = THREE.MathUtils.lerp(a.glow, b.glow, t);
   out.swing = THREE.MathUtils.lerp(a.swing, b.swing, t);
   out.headTilt = THREE.MathUtils.lerp(a.headTilt, b.headTilt, t);
+  out.twist = THREE.MathUtils.lerp(a.twist, b.twist, t);
   return out;
 };
 
-function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number): BossPose {
+/** Telegraph curve: slow gather for most of the window, then a quick final cock so the commit point is visible. */
+const gather = (u: number) => easeIn(u) * 0.55 + easeOut(u) * 0.2 + THREE.MathUtils.smoothstep(u, 0.72, 1) * 0.25;
+
+function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number, walkSpeed: number): BossPose {
   if (boss.staggerT > 0) {
-    lerpBossPose(out, BOSS_REST, BOSS_STAGGER, 1);
-    out.lean += Math.sin(timeMs / 70) * 0.05;
+    const u = 1 - boss.staggerT / BOSS.staggerMs;
+    lerpBossPose(out, BOSS_STAGGER, BOSS_REST, THREE.MathUtils.smoothstep(u, 0.7, 1));
+    out.lean += Math.sin(timeMs / 70) * 0.05 * (1 - u);
+    out.twist += Math.sin(timeMs / 110) * 0.06 * (1 - u);
     return out;
   }
   const current = boss.current;
-  if (!current) return lerpBossPose(out, BOSS_REST, BOSS_REST, 0);
-  const melee = current.move.type === "sweep" || current.move.type === "thrust" || current.move.type === "nova" || current.move.type === "charge";
-  const strike = melee ? BOSS_MELEE_STRIKE : BOSS_RANGED_STRIKE;
+  if (!current) {
+    lerpBossPose(out, BOSS_REST, BOSS_REST, 0);
+    // Walking bob: the body dips and leans into the stride so approach reads as weight, not sliding.
+    const stride = Math.min(1, walkSpeed / BOSS.walkSpeed);
+    out.rise = -Math.abs(Math.sin(timeMs / 190)) * 0.09 * stride;
+    out.lean = 0.08 * stride;
+    out.twist = Math.sin(timeMs / 190) * 0.05 * stride;
+    return out;
+  }
+  const perf: MovePerformance = MOVE_PERFORMANCE[current.move.type] ?? MOVE_PERFORMANCE.sweep;
   const timing = moveTiming(current.move.type);
   if (current.phase === "telegraph") {
     const u = current.t / current.telegraphMs;
-    lerpBossPose(out, BOSS_REST, BOSS_COIL, easeIn(u) * 0.7 + easeOut(u) * 0.3);
+    lerpBossPose(out, BOSS_REST, perf.coil, gather(u));
     const tremble = THREE.MathUtils.smoothstep(u, 0.7, 1) * Math.sin(timeMs / 22) * 0.035;
     out.lean += tremble;
     out.swing += tremble * 2;
@@ -181,19 +290,26 @@ function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number): Bos
   }
   if (current.phase === "active") {
     const u = timing.activeMs > 0 ? current.t / timing.activeMs : 1;
-    lerpBossPose(out, BOSS_COIL, strike, easeOut(u * 2.2));
+    lerpBossPose(out, perf.coil, perf.strike, easeOut(Math.min(1, u * 2.2)));
+    if (current.move.type === "charge") {
+      // Gallop while the run is live.
+      out.rise += Math.abs(Math.sin(timeMs / 60)) * 0.18;
+      out.squash *= 1 - Math.abs(Math.sin(timeMs / 60)) * 0.05;
+    }
     out.glow = 1 - u;
     return out;
   }
   const u = current.t / timing.recoverMs;
-  // Ranged moves have no active window, so the swing snaps forward at the start of recovery.
+  // Ranged moves have no active window, so the strike snaps at the start of recovery.
   if (timing.activeMs === 0) {
-    const snap = easeOut(u * 4);
-    lerpBossPose(out, BOSS_COIL, strike, snap);
-    if (snap >= 1) lerpBossPose(out, strike, BOSS_REST, holdThenEase(u, 0.4));
+    const snap = easeOut(Math.min(1, u * 4));
+    lerpBossPose(out, perf.coil, perf.strike, snap);
+    if (snap >= 1) lerpBossPose(out, perf.strike, BOSS_REST, holdThenEase(u, 0.4));
     return out;
   }
-  lerpBossPose(out, strike, BOSS_REST, holdThenEase(u, 0.35));
+  // Melee follow-through: overshoot into the settle pose, hang there, then ease back to rest.
+  if (u < 0.25) lerpBossPose(out, perf.strike, perf.settle, easeOut(u / 0.25));
+  else lerpBossPose(out, perf.settle, BOSS_REST, holdThenEase((u - 0.25) / 0.75, 0.3));
   return out;
 }
 
@@ -540,29 +656,67 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   arenaRoot.add(fallbackPlatform, fracture);
   // Hairline fractures in the slab glow faintly in the accent colour.
   const floorCrackMaterial = new THREE.MeshBasicMaterial({ color: accent.clone().multiplyScalar(0.5), toneMapped: false });
-  // Radial vignette that sinks the platform rim into the fog instead of ending on a lit edge.
+  // Floor dressing laid over the slab: low-frequency value breakup so the stone is not one flat tone, a darker apron
+  // past the playable disc with an accent hairline on the boundary, and a radial vignette that sinks the rim into fog.
+  const EDGE_FADE_RADIUS = ARENA_FLOOR_RADIUS * 1.25;
+  const edgeFadeUniforms = {
+    fogTint: { value: new THREE.Color(0x05040a) },
+    accent: { value: accent.clone() },
+    playRadius: { value: ARENA_RADIUS / EDGE_FADE_RADIUS },
+    worldRadius: { value: EDGE_FADE_RADIUS },
+    breakup: { value: tuning.floor.breakup },
+    apron: { value: tuning.floor.apron },
+    ring: { value: tuning.floor.ring },
+  };
   const edgeFadeMaterial = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    uniforms: { fogTint: { value: new THREE.Color(0x05040a) } },
+    uniforms: edgeFadeUniforms,
     vertexShader: `
       varying vec2 vUv;
       void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
     `,
     fragmentShader: `
       uniform vec3 fogTint;
+      uniform vec3 accent;
+      uniform float playRadius;
+      uniform float worldRadius;
+      uniform float breakup;
+      uniform float apron;
+      uniform float ring;
       varying vec2 vUv;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vnoise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+      }
       void main() {
-        float r = length(vUv - 0.5) * 2.0;
+        vec2 c = vUv - 0.5;
+        float r = length(c) * 2.0;
+        vec2 world = c * 2.0 * worldRadius;
+        // Two octaves of value noise at ~7 m and ~2.5 m: patches of worn and darker stone.
+        float n = vnoise(world / 7.0) * 0.65 + vnoise(world / 2.5 + 13.7) * 0.35;
+        float patches = smoothstep(0.35, 0.8, n) * breakup;
+        float edge = playRadius;
+        float apronDark = smoothstep(edge - 0.004, edge + 0.01, r) * apron;
         float fade = smoothstep(0.62, 1.0, r);
-        gl_FragColor = vec4(pow(fogTint, vec3(1.7)), fade * 0.92);
+        float dark = clamp(patches + apronDark + fade * 0.92, 0.0, 0.96);
+        // Accent hairline exactly on the playable edge, with a soft inner glow so the boundary reads from any angle.
+        float d = abs(r - edge) * worldRadius;
+        float line = (1.0 - smoothstep(0.0, 0.08, d)) * 0.9 + (1.0 - smoothstep(0.0, 0.9, d)) * 0.22;
+        line *= ring * (1.0 - fade);
+        vec3 tint = pow(fogTint, vec3(1.7));
+        vec3 col = mix(tint, accent * 1.6, clamp(line, 0.0, 1.0));
+        gl_FragColor = vec4(col, max(dark, line));
       }
     `,
   });
-  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_FLOOR_RADIUS * 1.25, 64), edgeFadeMaterial);
+  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(EDGE_FADE_RADIUS, 96), edgeFadeMaterial);
   edgeFade.rotation.x = -Math.PI / 2;
   edgeFade.position.y = 0.035;
   edgeFade.renderOrder = 1;
+  arenaRoot.add(edgeFade);
 
   const player = new THREE.Group();
   const playerVisualPivot = new THREE.Group();
@@ -648,6 +802,11 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let cameraYaw: number | null = null;
   let shake = 0;
   const shakeOffset = new THREE.Vector3();
+  const hitKick = new THREE.Vector3();
+  let hitKickT = 0;
+  const lastBossPosition = new THREE.Vector3();
+  const lookGoal = new THREE.Vector3();
+  const lookBoss = new THREE.Vector3();
   const toBoss = new THREE.Vector3();
   const desired = new THREE.Vector3();
   const lastPlayerPosition = new THREE.Vector3();
@@ -839,6 +998,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     emberMaterial.color.copy(color);
     rim.color.set(palette.rim);
     pool.color.copy(color).lerp(new THREE.Color(0xffe2c0), 0.6);
+    edgeFadeUniforms.accent.value.copy(color);
     const fogColor = new THREE.Color(palette.fog);
     scene.fog = new THREE.FogExp2(fogColor, tuning.fog.density);
     (edgeFadeMaterial.uniforms.fogTint!.value as THREE.Color).copy(fogColor);
@@ -932,6 +1092,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (event.type === "playerHit") {
         shake = Math.max(shake, 0.35);
         post.pulse(0xff2d4f, 1);
+        // Kick the camera along the shove so the hit has a direction, not just a flash.
+        hitKick.set(event.dir.x, 0.35, event.dir.z).normalize().multiplyScalar(tuning.camera.hitKick);
+        hitKickT = 1;
         if (fxOn) {
           burstAt.set(p.pos.x, 1.1, p.pos.z);
           burstDir.subVectors(player.position, boss.position).setY(0.4).normalize();
@@ -940,10 +1103,11 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         }
       }
       if (event.type === "bossHit") {
-        shake = Math.max(shake, event.heavy ? 0.25 : 0.1);
-        if (event.heavy) {
-          post.whiteFlash(0.22);
-          fovPunch = Math.max(fovPunch, 1);
+        const finisher = !event.heavy && event.combo === PLAYER.combo.length - 1;
+        shake = Math.max(shake, event.heavy ? 0.25 + event.charge * 0.25 : finisher ? 0.18 : 0.1);
+        if (event.heavy || finisher) {
+          post.whiteFlash(event.heavy ? 0.22 + event.charge * 0.3 : 0.12);
+          fovPunch = Math.max(fovPunch, event.heavy ? 1 + event.charge * 0.6 : 0.6);
         }
         if (fxOn) {
           burstAt.copy(player.position).addScaledVector(toBoss, PLAYER.radius + 1.3).setY(1.25);
@@ -976,10 +1140,11 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       }
       if (event.type === "playerDeath") post.pulse(0xff2d4f, 1);
       if (event.type === "playerRoll" && event.dodged) {
-        post.pulse(accent, 0.5);
+        post.pulse(accent, event.perfect ? 0.9 : 0.5);
+        if (event.perfect) post.whiteFlash(0.18);
         if (fxOn) {
           burstAt.copy(player.position).setY(0.9);
-          particles.burst(burstAt, { count: 24, color: hot, color2: accent, speed: 3.5, spread: 1, lifeMs: 380, size: 0.09, drag: 4, stretch: 1.6 });
+          particles.burst(burstAt, { count: event.perfect ? 60 : 24, color: event.perfect ? 0xffffff : hot, color2: accent, speed: event.perfect ? 6 : 3.5, spread: 1, lifeMs: event.perfect ? 620 : 380, size: 0.09, drag: 4, stretch: event.perfect ? 2.4 : 1.6 });
         }
       }
       if (event.type === "moveActive") {
@@ -996,10 +1161,23 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     playerSpeed = step > 0 ? Math.hypot(player.position.x - lastPlayerPosition.x, player.position.z - lastPlayerPosition.z) / step : 0;
     lastPlayerPosition.copy(player.position);
 
-    if (p.action === "light") attackPose(pose, p.actionT, PLAYER.light, LIGHT_WINDUP, LIGHT_STRIKE);
-    else if (p.action === "heavy") attackPose(pose, p.actionT, PLAYER.heavy, HEAVY_WINDUP, HEAVY_STRIKE);
-    else lerpPose(pose, REST_POSE, REST_POSE, 0);
-    const heavyCommit = p.action === "heavy" && lastActionT < PLAYER.heavy.windupMs && p.actionT >= PLAYER.heavy.windupMs;
+    if (p.action === "light") {
+      const stage = LIGHT_POSES[Math.min(p.comboIndex, LIGHT_POSES.length - 1)] ?? LIGHT_POSES[0]!;
+      attackPose(pose, p.actionT, attackFor(p), stage.windup, stage.strike);
+    } else if (p.action === "heavy") {
+      attackPose(pose, p.actionT, PLAYER.heavy, HEAVY_WINDUP, HEAVY_STRIKE);
+      if (p.charging || (p.charge > 0 && p.actionT < PLAYER.heavy.windupMs)) {
+        // Held at the top of the windup: sink lower, pull the blade further back and shiver as the charge fills.
+        const shiver = Math.sin(state.timeMs / 18) * 0.02 * p.charge;
+        pose.crouch += p.charge * 0.1;
+        pose.lean -= p.charge * 0.12 + shiver;
+        pose.bladeX -= p.charge * 0.5;
+        pose.charge = 1 + p.charge * 0.8;
+      }
+    } else if (p.action === "hurt") {
+      lerpPose(pose, HURT_POSE, REST_POSE, holdThenEase(clamp01(p.actionT / PLAYER.hurt.stunMs), 0.4));
+    } else lerpPose(pose, REST_POSE, REST_POSE, 0);
+    const heavyCommit = p.action === "heavy" && !p.charging && lastActionT < PLAYER.heavy.windupMs && p.actionT >= PLAYER.heavy.windupMs;
     if (heavyCommit) impactT = 0;
     lastActionT = p.action === "idle" ? 0 : p.actionT;
 
@@ -1036,15 +1214,17 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     });
 
     const heavy = p.action === "heavy";
+    const finisher = p.action === "light" && p.comboIndex === PLAYER.combo.length - 1;
     slashArc.visible = pose.slash > 0.01;
     if (slashArc.visible && slashArc.material instanceof THREE.MeshBasicMaterial) {
       slashArc.material.opacity = pose.slash * 0.95;
-      slashArc.material.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.55);
-      const reach = heavy ? 1.35 : 1;
+      slashArc.material.color.copy(accent).lerp(new THREE.Color(0xffffff), heavy ? 0.55 + p.charge * 0.35 : 0.55);
+      const reach = heavy ? 1.35 + p.charge * 0.35 : finisher ? 1.15 : 1;
       slashArc.scale.setScalar(reach * (0.8 + pose.slash * 0.2));
       slashArc.position.set(heavy ? 0.15 : 0.2, heavy ? 1.15 : 1.05, heavy ? 1.2 : 1.0);
-      // Light: a horizontal cut sweeping across; heavy: a vertical cleave down the centre line.
-      if (heavy) slashArc.rotation.set(0, -Math.PI / 2 + 0.2, Math.PI / 2 + 0.9);
+      // Light 1: a horizontal cut across; light 2: the return cut; light 3 and heavy: a vertical cleave down the centre line.
+      if (heavy || finisher) slashArc.rotation.set(0, -Math.PI / 2 + 0.2, Math.PI / 2 + 0.9);
+      else if (p.comboIndex === 1) slashArc.rotation.set(-Math.PI / 2 - 0.45, 0, 0.75 + Math.PI);
       else slashArc.rotation.set(-Math.PI / 2 + 0.45, 0, -0.75);
     }
     impactT = Math.min(1, impactT + step / 0.32);
@@ -1056,12 +1236,14 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       impactRing.position.z = 1.4;
     }
 
-    bossPose(bossPoseNow, b, state.timeMs);
+    const bossSpeed = step > 0 ? Math.hypot(boss.position.x - lastBossPosition.x, boss.position.z - lastBossPosition.z) / step : 0;
+    lastBossPosition.copy(boss.position);
+    bossPose(bossPoseNow, b, state.timeMs, bossSpeed);
     if (bossSpawn < 1) bossSpawn = Math.min(1, bossSpawn + step / 0.82);
     const reveal = 1 - Math.pow(1 - bossSpawn, 3);
     const spawnScale = 0.08 + bossSpawn * 0.92;
     bossVisualPivot.scale.set(bossPoseNow.stretch * spawnScale, bossPoseNow.squash * spawnScale, bossPoseNow.stretch * spawnScale);
-    bossVisualPivot.rotation.x = bossPoseNow.lean;
+    bossVisualPivot.rotation.set(bossPoseNow.lean, bossPoseNow.twist, 0);
     bossVisualPivot.position.z = bossPoseNow.lunge;
     bossVisualPivot.position.y = -2.1 * (1 - reveal) + bossPoseNow.rise + (b.invulnerableT > 0 ? Math.sin(state.timeMs / 90) * 0.15 + 0.4 : 0);
     if (bossRig.strike) {
@@ -1077,6 +1259,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     }
     if (bossRig.head) {
       bossRig.head.rotation.x = bossPoseNow.headTilt * 0.5;
+      // The head leads the body through a twist so a sweep reads as looking where it cuts.
+      bossRig.head.rotation.y = -bossPoseNow.twist * 0.6;
       if (bossRig.kind === "burst") bossRig.head.scale.setScalar(1 + bossPoseNow.glow * 0.25);
     }
 
@@ -1096,6 +1280,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       timeMs: state.timeMs,
       glow: bossPoseNow.glow,
       headTilt: bossPoseNow.headTilt,
+      swing: bossPoseNow.swing,
+      twist: bossPoseNow.twist,
       hitFlash: b.hitFlash,
       weakness: b.weaknessT > 0,
       staggered: b.staggerT > 0,
@@ -1107,6 +1293,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
     hazards.sync(state);
     toBoss.subVectors(boss.position, player.position).setY(0);
+    const gap = toBoss.length();
     if (mode === "fight") cameraYaw = nextCameraYaw(cameraYaw, toBoss.x, toBoss.z, step, p.action === "roll");
     if (cameraYaw !== null && mode === "fight") toBoss.set(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
     else toBoss.normalize();
@@ -1124,6 +1311,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     pool.position.set(pool.target.position.x, 13, pool.target.position.z);
     RIM.strength.value = tuning.rim.strength;
     RIM.power.value = tuning.rim.power;
+    edgeFadeUniforms.breakup.value = tuning.floor.breakup;
+    edgeFadeUniforms.apron.value = tuning.floor.apron;
+    edgeFadeUniforms.ring.value = tuning.floor.ring;
     if (scene.fog instanceof THREE.FogExp2) scene.fog.density = tuning.fog.density;
 
     playerRadiusLine.visible = bossRadiusLine.visible = meleeRangeLine.visible = debug.hitboxes;
@@ -1131,7 +1321,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       playerRadiusLine.position.copy(player.position);
       bossRadiusLine.position.copy(boss.position);
       meleeRangeLine.position.copy(boss.position);
-      const attack = p.action === "light" ? PLAYER.light : p.action === "heavy" ? PLAYER.heavy : null;
+      const attack = p.action === "light" || p.action === "heavy" ? attackFor(p) : null;
       reachLine.visible = attack !== null;
       if (attack) {
         const inActive = p.actionT >= attack.windupMs && p.actionT < attack.windupMs + attack.activeMs;
@@ -1153,19 +1343,28 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     if (debug.freeCamera) {
       // External controller owns the camera; still keep the sky and fill following it.
     } else if (mode === "fight") {
-      desired.copy(player.position).addScaledVector(toBoss, -tuning.camera.distance).addScaledVector(right, tuning.camera.side).setY(tuning.camera.height);
+      // Pull back as the fighters separate so a kiting boss never leaves the frame on the big disc.
+      const pullBack = THREE.MathUtils.clamp((gap - tuning.camera.farGap) * tuning.camera.pullBack, 0, tuning.camera.maxPullBack);
+      desired.copy(player.position)
+        .addScaledVector(toBoss, -(tuning.camera.distance + pullBack))
+        .addScaledVector(right, tuning.camera.side)
+        .setY(tuning.camera.height + pullBack * 0.45);
       const focusHeight = currentSpec
         ? THREE.MathUtils.clamp(BOSS_HEIGHTS[currentSpec.identity.silhouette] * (2 / 3), 1.35, 2.8)
         : 2;
+      // Frame both fighters: aim between the hero's chest and the boss's focus point so the hero stays in shot.
+      // The boss focus is clamped to a modest height and the whole target is damped, so a blink behind the camera
+      // or a knockback swings the pitch over a few frames instead of snapping it.
+      lookGoal.set(player.position.x, 1.2, player.position.z)
+        .lerp(lookBoss.set(boss.position.x, Math.min(boss.position.y + focusHeight, 2.6), boss.position.z), 0.66);
       if (first) {
         camera.position.copy(desired);
+        lookTarget.copy(lookGoal);
         first = false;
       } else {
         camera.position.lerp(desired, 1 - Math.exp(-step * tuning.camera.lag));
+        lookTarget.lerp(lookGoal, 1 - Math.exp(-step * tuning.camera.lookLag));
       }
-      // Frame both fighters: aim between the hero's chest and the boss's focus point so the hero stays in shot.
-      lookTarget.set(player.position.x, 1.2, player.position.z)
-        .lerp(new THREE.Vector3(boss.position.x, boss.position.y + focusHeight, boss.position.z), 0.66);
       camera.lookAt(lookTarget);
     } else {
       if (!reducedMotion.matches) attractAngle += step * 0.075;
@@ -1180,7 +1379,11 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     }
     shake = Math.max(0, shake - step * 2.2);
     shakeOffset.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, 0).multiplyScalar(tuning.camera.shake);
-    if (!debug.freeCamera) camera.position.add(shakeOffset);
+    hitKickT = Math.max(0, hitKickT - step / 0.28);
+    if (!debug.freeCamera) {
+      camera.position.add(shakeOffset);
+      camera.position.addScaledVector(hitKick, easeOut(hitKickT) * (reducedMotion.matches ? 0.3 : 1));
+    }
     skyDome.position.copy(camera.position);
     fill.position.copy(camera.position).add(new THREE.Vector3(0, 4, 0)).addScaledVector(right, -2.5);
     fill.target.position.copy(player.position).setY(1);

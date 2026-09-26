@@ -1,44 +1,343 @@
 :root {
+  color-scheme: dark;
   --ink: #05060a;
   --bone: #e9e4d8;
   --accent: #7fdcff;
+  --muted: #aaa9b4;
+  --surface: rgba(13, 14, 22, 0.9);
+  --border: rgba(233, 228, 216, 0.2);
+  --focus: #fff0a8;
+  --motion-fast: 150ms;
+  --motion-base: 250ms;
+  --motion-slow: 400ms;
   --font-display: "Cinzel", "Georgia", serif;
   --font-body: "IBM Plex Mono", "Menlo", monospace;
 }
+
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--ink); color: var(--bone); font-family: var(--font-body); overflow: hidden; }
-#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-#hud { position: fixed; inset: 0; pointer-events: none; }
+html, body { width: 100%; height: 100%; margin: 0; }
+body {
+  overflow: hidden;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button, textarea { font: inherit; }
+button { touch-action: manipulation; }
+button:focus-visible, textarea:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+#stage { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+#hud { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+#hud main { width: 100%; height: 100%; }
 #hud .panel { pointer-events: auto; }
 .hidden { display: none !important; }
+.skip-link { position: fixed; top: 10px; left: 10px; z-index: 10; padding: 10px 14px; color: var(--ink); background: var(--focus); transform: translateY(-160%); }
+.skip-link:focus-visible { transform: translateY(0); }
 
 #incantation {
-  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-  background: radial-gradient(ellipse at center, rgba(0,0,0,0.2), rgba(0,0,0,0.85) 70%);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: max(28px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  text-align: center;
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(8, 10, 18, 0.28) 0%, rgba(5, 6, 10, 0.72) 56%, rgba(5, 6, 10, 0.92) 100%);
 }
-.title { font-family: var(--font-display); font-size: clamp(48px, 9vw, 120px); letter-spacing: 0.35em; margin: 0; color: var(--bone);
-  text-shadow: 0 0 24px var(--accent), 0 0 2px #fff; }
-.tagline { margin: 0 0 18px; opacity: 0.7; letter-spacing: 0.12em; }
+.hero-runes {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(420px, 88vw);
+  aspect-ratio: 1;
+  opacity: 0.16;
+  transform: translate(-50%, -59%);
+  pointer-events: none;
+}
+.hero-runes svg { display: block; width: 100%; height: 100%; fill: none; stroke: var(--accent); stroke-width: 0.7; }
+.hero-runes circle:nth-child(2) { stroke-dasharray: 2 6; }
+.hero-runes circle:nth-child(3) { stroke-dasharray: 1 8; }
+.eyebrow, .ritual-heading, .boss-eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.eyebrow { position: relative; margin-bottom: 2px; }
+.title {
+  position: relative;
+  margin: 0;
+  color: var(--bone);
+  font-family: var(--font-display);
+  font-size: clamp(48px, 9vw, 92px);
+  font-weight: 700;
+  letter-spacing: clamp(0.13em, 2vw, 0.34em);
+  line-height: 1.1;
+  text-shadow: 0 0 26px color-mix(in srgb, var(--accent) 52%, transparent), 0 0 2px #fff;
+}
+.tagline { position: relative; margin: 10px 0 23px; color: var(--muted); letter-spacing: 0.04em; }
+#incantation-form { position: relative; width: min(700px, 100%); text-align: left; }
+#incantation-form > label { display: block; margin: 0 0 8px 2px; color: var(--bone); font-weight: 500; }
 #incantation-input {
-  width: min(680px, 90vw); padding: 14px 18px; font: inherit; font-size: 18px; color: var(--bone); resize: none;
-  background: rgba(10,12,20,0.7); border: 1px solid rgba(233,228,216,0.25); border-radius: 4px; outline: none;
+  display: block;
+  width: 100%;
+  min-height: 86px;
+  padding: 15px 16px;
+  resize: vertical;
+  color: var(--bone);
+  background: rgba(12, 14, 22, 0.91);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.035), 0 12px 38px rgba(0,0,0,0.24);
+  line-height: 1.55;
+  transition: border-color var(--motion-base), box-shadow var(--motion-base);
 }
-#incantation-input:focus { border-color: var(--accent); box-shadow: 0 0 18px rgba(127,220,255,0.25); }
-.row { display: flex; gap: 12px; }
-button { font: inherit; letter-spacing: 0.2em; padding: 12px 26px; cursor: pointer; color: var(--bone);
-  background: transparent; border: 1px solid rgba(233,228,216,0.35); border-radius: 2px; transition: 0.15s; }
-button:hover { border-color: var(--accent); box-shadow: 0 0 18px rgba(127,220,255,0.3); }
-button.primary { background: var(--accent); color: var(--ink); border-color: var(--accent); font-weight: 700; }
-button:disabled { opacity: 0.4; cursor: wait; }
-.status { min-height: 1.4em; opacity: 0.75; font-size: 14px; }
+#incantation-input::placeholder { color: #9796a1; opacity: 1; }
+#incantation-input:hover { border-color: rgba(233, 228, 216, 0.38); }
+#incantation-input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); outline-color: var(--focus); }
+#incantation-input[aria-invalid="true"] { border-color: #ff9288; }
+.field-meta { display: flex; min-height: 25px; justify-content: space-between; gap: 12px; align-items: center; color: var(--muted); font-size: 13px; }
+.field-error { min-height: 20px; margin: 1px 0 0; color: #ffb2aa; }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; }
+.example-chip {
+  min-height: 44px;
+  padding: 6px 11px;
+  color: var(--muted);
+  background: rgba(18, 19, 28, 0.68);
+  border: 1px solid rgba(233, 228, 216, 0.16);
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0;
+  transition: color var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast);
+}
+.example-chip:hover { color: var(--bone); border-color: var(--accent); background: rgba(20, 23, 33, 0.94); }
+.helper { margin: 8px 2px 14px; color: var(--muted); font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+button {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 10px 20px;
+  color: var(--bone);
+  background: rgba(10, 11, 17, 0.72);
+  border: 1px solid rgba(233, 228, 216, 0.3);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
+}
+button:hover { border-color: var(--accent); box-shadow: 0 0 17px color-mix(in srgb, var(--accent) 22%, transparent); }
+button:active { transform: translateY(1px); }
+button.primary { color: var(--ink); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+button.primary:hover { background: color-mix(in srgb, var(--accent) 82%, white); }
+button:disabled { opacity: 0.5; cursor: wait; box-shadow: none; }
+.spinner { width: 15px; height: 15px; border: 2px solid rgba(5, 6, 10, 0.35); border-top-color: var(--ink); border-radius: 50%; animation: spin 800ms linear infinite; }
+.status { position: relative; min-height: 22px; margin: 8px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+.ritual { position: relative; width: min(700px, 100%); margin-top: 10px; }
+.ritual-heading { margin-bottom: 10px; color: var(--accent); text-align: left; }
+.forge-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.forge-card {
+  min-width: 0;
+  min-height: 96px;
+  padding: 10px 11px;
+  text-align: left;
+  background: rgba(11, 12, 19, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  transition: border-color var(--motion-base), background var(--motion-base), box-shadow var(--motion-base);
+}
+.forge-card > span { display: block; color: var(--muted); font-size: 10px; letter-spacing: 0.1em; }
+.forge-card strong { display: block; margin-top: 5px; font-family: var(--font-display); font-size: 14px; font-weight: 600; }
+.forge-card p { overflow: hidden; margin: 2px 0 0; color: var(--muted); font-size: 12px; text-overflow: ellipsis; }
+.forge-card.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, #0b0c13); box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 18%, transparent); }
+.forge-card.complete { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); }
 
-#fight { position: absolute; inset: 0; }
-#boss-bar { position: absolute; left: 50%; bottom: 8vh; transform: translateX(-50%); width: min(720px, 80vw); text-align: center; }
-#boss-name { font-family: var(--font-display); letter-spacing: 0.3em; font-size: 22px; text-shadow: 0 0 12px var(--accent); }
-.bar { height: 8px; background: rgba(233,228,216,0.12); border: 1px solid rgba(233,228,216,0.3); margin-top: 6px; }
-.bar > div { height: 100%; width: 100%; background: var(--accent); box-shadow: 0 0 12px var(--accent); transition: width 0.12s; }
-#player-bar { position: absolute; left: 4vw; top: 4vh; width: min(360px, 40vw); }
-.bar.stamina { height: 5px; margin-top: 4px; }
-.bar.stamina > div { background: #c8f56a; box-shadow: 0 0 8px #c8f56a; }
-.subtitle { position: absolute; left: 50%; bottom: 16vh; transform: translateX(-50%); font-size: 20px; letter-spacing: 0.05em;
-  text-shadow: 0 2px 8px #000; white-space: nowrap; }
+#fight { position: absolute; inset: 0; pointer-events: none; }
+#fight > * { pointer-events: none; }
+#player-bar, .retreat, #boss-bar, .subtitle, .controls-hint { z-index: 3; }
+#player-bar { position: absolute; top: max(26px, env(safe-area-inset-top)); left: max(28px, env(safe-area-inset-left)); width: min(285px, 42vw); }
+.meter + .meter { margin-top: 11px; }
+.meter-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; color: var(--bone); font-size: 12px; font-weight: 500; letter-spacing: 0.12em; }
+.meter-heading span:last-child { color: var(--muted); letter-spacing: 0.02em; }
+.bar { height: 9px; overflow: hidden; background: rgba(4, 5, 9, 0.78); border: 1px solid rgba(233, 228, 216, 0.32); box-shadow: 0 2px 10px rgba(0,0,0,0.28); }
+.bar > div { width: 100%; height: 100%; background: var(--accent); box-shadow: 0 0 13px var(--accent); transition: width var(--motion-fast); }
+.bar.stamina { height: 6px; }
+.bar.stamina > div { background: #c8f56a; box-shadow: 0 0 9px #c8f56a; }
+.retreat {
+  position: absolute;
+  top: max(20px, env(safe-area-inset-top));
+  right: max(20px, env(safe-area-inset-right));
+  min-height: 44px;
+  padding: 8px 12px;
+  background: rgba(5, 6, 10, 0.74);
+  pointer-events: auto !important;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+.retreat svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+kbd {
+  display: inline-flex;
+  min-width: 25px;
+  min-height: 25px;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  color: var(--bone);
+  background: rgba(10, 11, 17, 0.78);
+  border: 1px solid rgba(233, 228, 216, 0.35);
+  border-radius: 3px;
+  font: 500 12px/1 var(--font-body);
+}
+.retreat kbd { min-width: 36px; min-height: 24px; margin-left: 2px; color: var(--muted); font-size: 10px; }
+#boss-bar { position: absolute; bottom: max(8vh, 54px); left: 50%; width: min(620px, 74vw); transform: translateX(-50%); text-align: center; }
+.boss-eyebrow { margin-bottom: 4px; font-size: 10px; }
+#boss-name { margin: 0; font: 600 clamp(22px, 3vw, 34px)/1.18 var(--font-display); letter-spacing: 0.08em; text-shadow: 0 0 16px color-mix(in srgb, var(--accent) 45%, transparent); }
+#boss-title { margin: 2px 0 9px; color: var(--muted); font: 500 13px/1.4 var(--font-display); letter-spacing: 0.08em; }
+.phase-pips { display: flex; justify-content: center; gap: 7px; margin: 0 0 8px; }
+.phase-pip { width: 24px; height: 4px; background: rgba(233, 228, 216, 0.25); border: 1px solid rgba(233, 228, 216, 0.26); }
+.phase-pip.active { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 9px var(--accent); }
+.boss-health { height: 8px; }
+.subtitle {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(8vh, 54px) + 126px);
+  width: min(650px, calc(100vw - 40px));
+  margin: 0;
+  color: var(--bone);
+  font-size: clamp(15px, 1.5vw, 19px);
+  line-height: 1.55;
+  text-align: center;
+  text-wrap: balance;
+  text-shadow: 0 2px 11px #000, 0 0 18px rgba(0,0,0,0.9);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  animation: subtitle-arrive 700ms 250ms ease-out forwards;
+}
+.controls-hint {
+  position: absolute;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  left: max(20px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.controls-hint > span { margin: 0 4px; font-size: 10px; letter-spacing: 0.1em; }
+.letterbox { position: absolute; left: 0; z-index: 2; width: 100%; height: 0; background: #030308; transition: height var(--motion-slow) ease; }
+#letterbox-top { top: 0; }
+#letterbox-bottom { bottom: 0; }
+#fight.intro-active .letterbox { height: min(8vh, 68px); }
+.boss-intro {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 4;
+  width: min(720px, calc(100vw - 36px));
+  padding: 24px;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  text-shadow: 0 2px 17px #000;
+  animation: intro-arrive 500ms ease-out;
+  transition: opacity var(--motion-slow) ease;
+}
+.boss-intro.departing { opacity: 0; }
+.boss-intro > p { margin: 0 0 8px; color: var(--accent); font-size: 11px; letter-spacing: 0.25em; }
+.boss-intro h2 { margin: 0; font: 700 clamp(32px, 8vw, 76px)/1.1 var(--font-display); letter-spacing: 0.07em; }
+.boss-intro > span { display: block; margin-top: 7px; color: var(--bone); font: 600 clamp(15px, 3vw, 21px) var(--font-display); letter-spacing: 0.13em; }
+
+@keyframes subtitle-arrive { to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes intro-arrive { from { opacity: 0; transform: translate(-50%, calc(-50% + 12px)); } to { opacity: 1; transform: translate(-50%, -50%); } }
+@keyframes rune-turn { to { transform: translate(-50%, -59%) rotate(360deg); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 600px) {
+  #incantation { padding-right: 18px; padding-left: 18px; }
+  .tagline { margin: 6px 0 17px; font-size: 14px; }
+  #incantation-form > label { font-size: 15px; }
+  #incantation-input { min-height: 78px; padding: 12px; font-size: 16px; }
+  .examples { gap: 6px; }
+  .example-chip { min-height: 44px; padding: 6px 8px; font-size: 11px; }
+  .actions button { flex: 1 1 auto; padding-right: 12px; padding-left: 12px; }
+  .forge-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .forge-card { min-height: 77px; padding: 7px 9px; }
+  .forge-card > span { font-size: 9px; }
+  .forge-card strong { margin-top: 2px; font-size: 13px; }
+  .forge-card p { font-size: 11px; }
+  #player-bar { top: max(18px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); width: min(210px, 53vw); }
+  .meter-heading { margin-bottom: 3px; font-size: 10px; }
+  .meter + .meter { margin-top: 8px; }
+  .retreat { top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); gap: 5px; min-height: 44px; padding: 7px 8px; font-size: 10px; }
+  .retreat kbd { display: none; }
+  #boss-bar { bottom: max(10vh, 62px); width: calc(100vw - 34px); }
+  #boss-name { font-size: clamp(20px, 6vw, 28px); letter-spacing: 0.03em; }
+  #boss-title { margin-bottom: 6px; font-size: 12px; }
+  .boss-eyebrow { font-size: 9px; }
+  .phase-pips { margin-bottom: 6px; }
+  .subtitle { bottom: calc(max(10vh, 62px) + 112px); width: calc(100vw - 36px); font-size: 15px; }
+  .controls-hint { left: 10px; bottom: max(12px, env(safe-area-inset-bottom)); gap: 3px; font-size: 9px; }
+  .controls-hint kbd { min-width: 21px; min-height: 23px; padding: 1px 3px; font-size: 10px; }
+  .controls-hint > span { margin: 0 2px; font-size: 9px; }
+  .boss-intro { padding: 18px 10px; }
+  .boss-intro > p { font-size: 10px; }
+}
+
+@media (max-height: 560px) and (orientation: landscape) {
+  #incantation { justify-content: flex-start; gap: 0; padding-top: 12px; padding-bottom: 12px; }
+  .hero-runes { width: 220px; transform: translate(-50%, -64%); }
+  .eyebrow { font-size: 10px; }
+  .title { font-size: clamp(38px, 8vh, 54px); }
+  .tagline { margin: 3px 0 9px; font-size: 13px; }
+  #incantation-form > label { margin-bottom: 4px; font-size: 14px; }
+  #incantation-input { min-height: 58px; padding: 8px 10px; font-size: 14px; }
+  .field-meta { min-height: 19px; font-size: 11px; }
+  .field-error { min-height: 16px; margin: 0; }
+  .example-chip { min-height: 44px; padding: 3px 7px; font-size: 10px; }
+  .helper { margin: 4px 2px 7px; font-size: 11px; }
+  .actions button { min-height: 44px; padding-top: 6px; padding-bottom: 6px; font-size: 11px; }
+  .status { min-height: 18px; margin-top: 3px; font-size: 11px; }
+  .ritual { margin-top: 3px; }
+  .ritual-heading { margin-bottom: 4px; font-size: 10px; }
+  .forge-card { min-height: 61px; padding: 4px 7px; }
+  .forge-card > span { font-size: 8px; }
+  .forge-card strong { font-size: 12px; }
+  .forge-card p { font-size: 10px; }
+  #player-bar { top: 12px; }
+  .meter + .meter { margin-top: 5px; }
+  #boss-bar { bottom: 35px; width: min(550px, 58vw); }
+  .boss-eyebrow { margin-bottom: 0; }
+  #boss-name { font-size: 22px; }
+  #boss-title { margin: 0 0 4px; font-size: 11px; }
+  .phase-pips { margin-bottom: 4px; }
+  .subtitle { bottom: 160px; max-width: min(580px, 60vw); font-size: 14px; }
+  .controls-hint { bottom: 8px; }
+  .retreat { top: 10px; right: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

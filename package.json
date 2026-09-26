@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "build:itch": "vite build && node scripts/build-itch.mjs",
+    "art:gen": "node scripts/gen-art.mjs",
+    "art:process": "${BLENDER:-blender} -b --factory-startup --python blender/process_art.py",
     "assets:build": "${BLENDER:-blender} -b --factory-startup --python blender/build_assets.py -- --out src/assets/models",
     "preview": "vite preview",
     "test": "vitest run",

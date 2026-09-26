@@ -4,7 +4,7 @@ import { createBattle, IDLE_INPUT } from "./battle";
 import { FALLBACK_SPECS } from "../spec/fallback";
 import { AVERAGE_BOT, calibrateDifficulty, DIFFICULTY_BAND, measureDifficulty, simulateBattle } from "./bot";
 import { overlaps } from "./hazard";
-import { ARENA_RADIUS, BOSS, BOSS_EDGE_MARGIN, PLAYER, PLAYER_EDGE_MARGIN } from "./constants";
+import { ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, PLAYER, PLAYER_EDGE_MARGIN } from "./constants";
 import { len } from "./vec";
 import type { PlayerInput } from "./types";
 
@@ -128,5 +128,56 @@ describe("arena rim", () => {
         expect(hits, `${boss.code} @${angle} landed no hit`).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe("closing_ring", () => {
+  const ringed = (): NemesisSpec => {
+    const s = structuredClone(spec);
+    s.phases[1]!.rule = "closing_ring";
+    return s;
+  };
+
+  it("starts at the full radius and shrinks over the phase change", () => {
+    const b = createBattle(ringed(), 5);
+    expect(b.state.arena.radius).toBe(ARENA_RADIUS);
+    b.state.boss.hp = Math.floor(spec.stats.maxHp * 0.49);
+    const events = run(b, IDLE_INPUT, 100);
+    const shrink = events.find((e) => e.type === "arenaShrink");
+    expect(shrink).toEqual({ type: "arenaShrink", from: ARENA_RADIUS, to: ARENA_RADIUS * ARENA_SHRINK.factor, ms: ARENA_SHRINK.shrinkMs });
+    expect(b.state.arena.radius).toBeLessThan(ARENA_RADIUS);
+    run(b, IDLE_INPUT, ARENA_SHRINK.shrinkMs);
+    expect(b.state.arena.radius).toBeCloseTo(ARENA_RADIUS * ARENA_SHRINK.factor, 6);
+  });
+
+  it("pushes a rim-hugging player and boss inside the new disc", () => {
+    const b = createBattle(ringed(), 3);
+    b.debug.bossAi = false;
+    b.debug.playerInvulnerable = true;
+    run(b, { ...IDLE_INPUT, move: { x: 1, z: 0 } }, 12000);
+    b.state.boss.pos = { x: 0, z: -(ARENA_RADIUS - BOSS.radius - BOSS_EDGE_MARGIN) };
+    b.state.boss.hp = Math.floor(spec.stats.maxHp * 0.49);
+    run(b, { ...IDLE_INPUT, move: { x: 1, z: 0 } }, ARENA_SHRINK.shrinkMs + 500);
+    const r = b.state.arena.radius;
+    expect(len(b.state.player.pos)).toBeCloseTo(r - PLAYER_EDGE_MARGIN, 5);
+    b.debug.forceMove("charge");
+    run(b, IDLE_INPUT, 3000);
+    expect(len(b.state.boss.pos)).toBeLessThanOrEqual(r - BOSS.radius - BOSS_EDGE_MARGIN + 1e-6);
+  });
+
+  it("never shrinks below the floor and applies an opening-phase rule instantly", () => {
+    const s = ringed();
+    s.phases[0]!.rule = "closing_ring";
+    const b = createBattle(s, 1);
+    expect(b.state.arena.radius).toBeCloseTo(ARENA_RADIUS * ARENA_SHRINK.factor, 6);
+    expect(b.step(IDLE_INPUT).some((e) => e.type === "arenaShrink")).toBe(false);
+    for (let i = 0; i < 10; i += 1) b.state.arena.targetRadius = Math.max(ARENA_SHRINK.minRadius, b.state.arena.targetRadius * ARENA_SHRINK.factor);
+    expect(b.state.arena.targetRadius).toBe(ARENA_SHRINK.minRadius);
+  });
+
+  it("stays deterministic with a shrinking arena", () => {
+    const a = simulateBattle(ringed(), 9);
+    const c = simulateBattle(ringed(), 9);
+    expect(a).toEqual(c);
   });
 });

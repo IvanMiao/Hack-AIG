@@ -4,6 +4,12 @@ export const ARENA_RADIUS = 27;
 export const ARENA_FLOOR_RADIUS = ARENA_RADIUS + 2;
 export const PLAYER_EDGE_MARGIN = 0.8;
 export const BOSS_EDGE_MARGIN = 1.6;
+/** `closing_ring` phase rule: each ringed phase multiplies the playable radius, eased over `shrinkMs`. */
+export const ARENA_SHRINK = {
+  factor: 0.7,
+  minRadius: ARENA_RADIUS * 0.5,
+  shrinkMs: 4000,
+} as const;
 
 export const PLAYER = {
   maxHp: 100,

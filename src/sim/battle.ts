@@ -1,10 +1,8 @@
 import type { Move, MoveType, NemesisSpec, Phase } from "../spec";
-import { ARENA_RADIUS, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
-
-const BOSS_LIMIT = ARENA_RADIUS - BOSS.radius - BOSS_EDGE_MARGIN;
+import { ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
 import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
-import type { BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
+import type { ArenaState, BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
 import { add, clampToDisc, dist, dot, len, norm, perp, rotate, scale, sub, vec } from "./vec";
 
 /** Lab-only switches. All default off; the shipped game never touches them. */
@@ -43,8 +41,12 @@ const emptyLog = (): DeathLog => ({
 });
 
 export function createInitialState(spec: NemesisSpec, seed: number): BattleState {
+  const arena: ArenaState = { radius: ARENA_RADIUS, targetRadius: ARENA_RADIUS, shrinkFrom: ARENA_RADIUS, shrinkT: 0, shrinkMs: 0 };
+  const opening = spec.phases[0];
+  if (opening) applyPhaseRule(arena, opening, null);
   return {
     seed,
+    arena,
     timeMs: 0,
     outcome: "fighting",
     player: {
@@ -62,6 +64,34 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
     tauntT: BOSS.tauntEveryMs * 0.6,
   };
 }
+
+/**
+ * Arena side of a phase rule. `closing_ring` shrinks the disc; with `events` the shrink eases in over
+ * `ARENA_SHRINK.shrinkMs` and is announced, without (opening phase) it applies instantly.
+ */
+export function applyPhaseRule(arena: ArenaState, phase: Phase, events: BattleEvent[] | null): void {
+  if (phase.rule !== "closing_ring") return;
+  const to = Math.max(ARENA_SHRINK.minRadius, arena.targetRadius * ARENA_SHRINK.factor);
+  if (to >= arena.targetRadius - 1e-6) return;
+  arena.shrinkFrom = arena.radius;
+  arena.targetRadius = to;
+  if (!events) {
+    arena.radius = to;
+    arena.shrinkT = arena.shrinkMs = 0;
+    return;
+  }
+  arena.shrinkT = 0;
+  arena.shrinkMs = ARENA_SHRINK.shrinkMs;
+  events.push({ type: "arenaShrink", from: arena.shrinkFrom, to, ms: arena.shrinkMs });
+}
+
+const stepArena = (arena: ArenaState) => {
+  if (arena.shrinkT >= arena.shrinkMs) return;
+  arena.shrinkT = Math.min(arena.shrinkMs, arena.shrinkT + TICK_MS);
+  const u = arena.shrinkT / arena.shrinkMs;
+  const ease = u * u * (3 - 2 * u);
+  arena.radius = arena.shrinkFrom + (arena.targetRadius - arena.shrinkFrom) * ease;
+};
 
 const idleGap = (aggression: number) => BOSS.idleMs.slow + (BOSS.idleMs.fast - BOSS.idleMs.slow) * aggression;
 
@@ -92,6 +122,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const rng: Rng = createRng(seed);
   const pendingEvents: BattleEvent[] = [];
   const tickAttack = (attack: typeof PLAYER.light | typeof PLAYER.heavy) => attack.windupMs + attack.activeMs + attack.recoverMs;
+  const bossLimit = () => state.arena.radius - BOSS.radius - BOSS_EDGE_MARGIN;
 
   // ---- player -------------------------------------------------------------------------------
   const rollDirectionLabel = (dir: Vec2, toBoss: Vec2): keyof DeathLog["rolls"] => {
@@ -152,7 +183,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       if (p.actionT >= tickAttack(attack)) p.action = "idle";
     }
 
-    p.pos = clampToDisc(p.pos, ARENA_RADIUS - PLAYER_EDGE_MARGIN);
+    p.pos = clampToDisc(p.pos, state.arena.radius - PLAYER_EDGE_MARGIN);
     p.staminaRegenDelay = Math.max(0, p.staminaRegenDelay - TICK_MS);
     if (p.staminaRegenDelay === 0 && p.action !== "roll") p.stamina = Math.min(PLAYER.maxStamina, p.stamina + (PLAYER.staminaRegenPerSec * TICK_MS) / 1000);
     p.hitFlash = Math.max(0, p.hitFlash - TICK_MS);
@@ -269,7 +300,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         break;
       case "ring":
         for (let i = 0; i < move.count; i += 1) {
-          const h = spawnHazard("ring", { kind: "ring", center: { ...b.pos }, radius: MOVE.ring.startRadius - (MOVE.ring.growth * MOVE.ring.waveGapMs * i) / 1000, thickness: MOVE.ring.thickness * move.scale, growth: MOVE.ring.growth, maxRadius: ARENA_RADIUS + 1 }, move.damage, 60000);
+          const h = spawnHazard("ring", { kind: "ring", center: { ...b.pos }, radius: MOVE.ring.startRadius - (MOVE.ring.growth * MOVE.ring.waveGapMs * i) / 1000, thickness: MOVE.ring.thickness * move.scale, growth: MOVE.ring.growth, maxRadius: state.arena.radius + 1 }, move.damage, 60000);
           h.cooldown = 0;
         }
         break;
@@ -285,13 +316,13 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       case "zone":
         for (let i = 0; i < move.count; i += 1) {
           const offset = i === 0 ? vec() : rotate(vec(0, MOVE.zone.scatter), rng.range(0, Math.PI * 2));
-          const center = clampToDisc(add(current.aim, offset), ARENA_RADIUS - 0.5);
+          const center = clampToDisc(add(current.aim, offset), state.arena.radius - 0.5);
           spawnHazard("zone", { kind: "circle", center, radius: MOVE.zone.radius * move.scale }, move.damage, MOVE.zone.ttlMs, true);
         }
         break;
       case "blink": {
         const behind = norm(sub(state.player.pos, b.pos));
-        b.pos = clampToDisc(add(state.player.pos, behind, MOVE.blink.distanceBehind), BOSS_LIMIT);
+        b.pos = clampToDisc(add(state.player.pos, behind, MOVE.blink.distanceBehind), bossLimit());
         b.facing = scale(behind, -1);
         if (spec.weakness.trigger === "after_blink") openWeakness(events);
         break;
@@ -320,6 +351,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         state.hazards = [];
         state.projectiles = [];
         events.push({ type: "phaseChange", phaseIndex: i });
+        applyPhaseRule(state.arena, phase, events);
         break;
       }
     }
@@ -337,7 +369,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         events.push({ type: "taunt", index: Math.floor(rng.next() * spec.voice.lines.taunt.length) });
       }
       b.facing = toPlayer;
-      if (dist(b.pos, p.pos) > BOSS.meleeRange) b.pos = clampToDisc(add(b.pos, toPlayer, (BOSS.walkSpeed * TICK_MS) / 1000), BOSS_LIMIT);
+      if (dist(b.pos, p.pos) > BOSS.meleeRange) b.pos = clampToDisc(add(b.pos, toPlayer, (BOSS.walkSpeed * TICK_MS) / 1000), bossLimit());
       if (debug.bossAi && b.idleT >= b.idleFor && b.invulnerableT <= 0) {
         beginMove(chooseMove(phase), false, events);
         b.idleT = 0;
@@ -362,7 +394,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     }
     if (current.phase === "active") {
       if (current.move.type === "charge") {
-        b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), BOSS_LIMIT);
+        b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), bossLimit());
         if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned) {
           current.spawned = true;
           hurtPlayer(current.move.damage, "charge", events);
@@ -404,7 +436,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     const alive: Projectile[] = [];
     for (const pr of state.projectiles) {
       pr.pos = add(pr.pos, pr.vel, TICK_MS / 1000);
-      if (len(pr.pos) > ARENA_RADIUS + 1) continue;
+      if (len(pr.pos) > state.arena.radius + 1) continue;
       if (dist(pr.pos, p.pos) <= pr.radius + PLAYER.radius) {
         hurtPlayer(pr.damage, "volley", events);
         continue;
@@ -419,6 +451,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     if (state.outcome !== "fighting") return events;
     if (pendingEvents.length > 0) events.push(...pendingEvents.splice(0));
     state.timeMs += TICK_MS;
+    stepArena(state.arena);
     stepPlayer(input, events);
     if (state.outcome !== "fighting") return events;
     stepBoss(events);
@@ -447,7 +480,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
 }
 
 /** Ground decal to draw while a move is telegraphed: the same geometry the hitbox will use. */
-export function previewShape(current: BossMove, boss: BossState): HazardShape | null {
+export function previewShape(current: BossMove, boss: BossState, arenaRadius = ARENA_RADIUS): HazardShape | null {
   const { move } = current;
   const dir = norm(sub(current.aim, boss.pos), boss.facing);
   switch (move.type) {
@@ -455,8 +488,8 @@ export function previewShape(current: BossMove, boss: BossState): HazardShape | 
     case "thrust": return { kind: "line", start: boss.pos, dir, length: MOVE.thrust.length * move.scale, halfWidth: MOVE.thrust.halfWidth * move.scale };
     case "charge": return { kind: "line", start: boss.pos, dir, length: (MOVE.charge.speed * MOVE.charge.activeMs) / 1000, halfWidth: MOVE.charge.hitRadius * move.scale };
     case "nova": return { kind: "circle", center: boss.pos, radius: MOVE.nova.radius * move.scale };
-    case "ring": return { kind: "ring", center: boss.pos, radius: MOVE.ring.startRadius, thickness: MOVE.ring.thickness * move.scale, growth: 0, maxRadius: ARENA_RADIUS };
-    case "volley": return { kind: "arc", center: boss.pos, radius: ARENA_RADIUS, dir, halfAngle: (MOVE.volley.spread * move.scale) / 2 };
+    case "ring": return { kind: "ring", center: boss.pos, radius: MOVE.ring.startRadius, thickness: MOVE.ring.thickness * move.scale, growth: 0, maxRadius: arenaRadius };
+    case "volley": return { kind: "arc", center: boss.pos, radius: arenaRadius, dir, halfAngle: (MOVE.volley.spread * move.scale) / 2 };
     case "zone": return { kind: "circle", center: current.aim, radius: MOVE.zone.radius * move.scale };
     case "blink": return null;
   }

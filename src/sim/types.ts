@@ -93,6 +93,7 @@ export type BattleEvent =
   | { type: "bossStagger" }
   | { type: "weaknessOpen"; ms: number }
   | { type: "phaseChange"; phaseIndex: number }
+  | { type: "arenaShrink"; from: number; to: number; ms: number }
   | { type: "taunt"; index: number }
   | { type: "playerDeath"; lineIndex: number }
   | { type: "bossDefeat" };
@@ -115,8 +116,19 @@ export interface DeathLog {
   bossHpFractionAtDeath: number;
 }
 
+/** Runtime arena: the playable disc can shrink mid-fight; visuals read `radius`, clamps read it every tick. */
+export interface ArenaState {
+  radius: number;
+  targetRadius: number;
+  shrinkFrom: number;
+  /** ms elapsed in the current shrink; equals `shrinkMs` once settled */
+  shrinkT: number;
+  shrinkMs: number;
+}
+
 export interface BattleState {
   seed: number;
+  arena: ArenaState;
   timeMs: number;
   outcome: Outcome;
   player: PlayerState;

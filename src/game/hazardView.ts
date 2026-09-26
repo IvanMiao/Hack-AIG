@@ -403,7 +403,7 @@ export function createHazardView(scene: THREE.Scene) {
 
     const current = state.boss.current;
     if (current?.phase === "telegraph") {
-      const shape = previewShape(current, state.boss);
+      const shape = previewShape(current, state.boss, state.arena.radius);
       if (shape) {
         const u = current.t / current.telegraphMs;
         place(shape, u, 0, 0, 0.55 + 0.45 * u);

@@ -17,7 +17,7 @@ const fadeTo = (audio: HTMLAudioElement, target: number, ms: number, onDone?: ()
   const startedAt = performance.now();
   const tick = (now: number) => {
     const t = Math.min(1, (now - startedAt) / ms);
-    audio.volume = start + (target - start) * t;
+    audio.volume = Math.min(1, Math.max(0, start + (target - start) * t));
     if (t < 1) requestAnimationFrame(tick); else onDone?.();
   };
   requestAnimationFrame(tick);

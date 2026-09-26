@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-itch
+*.zip
+.env
+.env.*
+!.env.example
+.dev.vars
+.wrangler
+worker/worker-configuration.d.ts
+.DS_Store

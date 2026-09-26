@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nemesis-forge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+  "kv_namespaces": [
+    // Create with: npx wrangler kv namespace create NEMESIS_KV  (paste the id here)
+    { "binding": "NEMESIS_KV", "id": "REPLACE_WITH_KV_ID" }
+  ],
+  "vars": {
+    "GEMINI_TEXT_MODEL": "gemini-3.8-flash",
+    "GEMINI_IMAGE_MODEL": "gemini-3.1-flash-image",
+    "MUSIC_PROVIDER": "lyria",
+    "ALLOWED_ORIGINS": "http://localhost:5173,https://html-classic.itch.zone,https://itch.io"
+  }
+  // Secrets (npx wrangler secret put <NAME> --config worker/wrangler.jsonc):
+  //   GEMINI_API_KEY, GRADIUM_API_KEY, ELEVENLABS_API_KEY (optional)
+}

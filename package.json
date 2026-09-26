@@ -1,0 +1,32 @@
+{
+  "name": "nemesis",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:itch": "vite build && node scripts/build-itch.mjs",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p worker/tsconfig.json",
+    "worker:dev": "wrangler dev --config worker/wrangler.jsonc",
+    "worker:deploy": "wrangler deploy --config worker/wrangler.jsonc",
+    "verify": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260918.1",
+    "@types/node": "^24.0.0",
+    "@types/three": "^0.185.1",
+    "adm-zip": "^0.5.16",
+    "@types/adm-zip": "^0.5.7",
+    "typescript": "~5.8.3",
+    "vite": "^6.4.1",
+    "vitest": "^3.2.4",
+    "wrangler": "4.135.0"
+  }
+}

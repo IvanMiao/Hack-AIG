@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NEMESIS</title>
+    <link rel="stylesheet" href="/src/styles/hud.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="hud">
+      <section id="incantation" class="panel">
+        <h1 class="title">NEMESIS</h1>
+        <p class="tagline">One sentence. One boss. It remembers.</p>
+        <textarea id="incantation-input" rows="2" maxlength="280"
+          placeholder="Speak a nightmare into existence…"></textarea>
+        <div class="row">
+          <button id="summon-btn" class="primary">SUMMON</button>
+          <button id="fallback-btn">Use a bound nightmare</button>
+        </div>
+        <p id="incantation-status" class="status"></p>
+      </section>
+      <section id="fight" class="panel hidden">
+        <div id="boss-bar"><span id="boss-name"></span><div class="bar"><div id="boss-hp"></div></div></div>
+        <div id="player-bar"><div class="bar"><div id="player-hp"></div></div><div class="bar stamina"><div id="player-stamina"></div></div></div>
+        <p id="subtitle" class="subtitle"></p>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

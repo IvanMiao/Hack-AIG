@@ -12,6 +12,8 @@ export interface Stage {
   camera: THREE.PerspectiveCamera;
   ready: Promise<void>;
   applySpec(spec: NemesisSpec): void;
+  /** Fetch the boss model for this spec (arena/player load eagerly; bosses stream in per silhouette). Resolves even if the model fails. */
+  preloadBoss(spec: NemesisSpec, onProgress?: (fraction: number) => void): Promise<void>;
   setSky(url: string | null): void;
   setMode(mode: "attract" | "fight"): void;
   /** Map a screen-relative stick (x = right, z = forward) into world space using the current camera yaw. */
@@ -88,13 +90,17 @@ interface BossPose {
   stretch: number;
   squash: number;
   glow: number;
+  /** Arm pivot angle about X (radians): 0 hangs at rest, -π/2 points forward, -2.3 is raised overhead. */
+  swing: number;
+  /** Head tilt: negative = reared back, positive = lunging forward/down. Also drives the swarm's contract/burst. */
+  headTilt: number;
 }
 
-const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0 };
-const BOSS_COIL: BossPose = { lean: -0.38, lunge: -0.35, rise: 0.4, stretch: 1.08, squash: 1.12, glow: 1 };
-const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0 };
-const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0 };
-const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0 };
+const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0, swing: 0, headTilt: 0 };
+const BOSS_COIL: BossPose = { lean: -0.3, lunge: -0.35, rise: 0.4, stretch: 1.06, squash: 1.1, glow: 1, swing: -2.3, headTilt: -0.5 };
+const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0, swing: -0.75, headTilt: 0.55 };
+const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0, swing: -1.45, headTilt: 0.3 };
+const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0, swing: 0.35, headTilt: 0.6 };
 
 const lerpBossPose = (out: BossPose, a: BossPose, b: BossPose, t: number): BossPose => {
   out.lean = THREE.MathUtils.lerp(a.lean, b.lean, t);
@@ -103,6 +109,8 @@ const lerpBossPose = (out: BossPose, a: BossPose, b: BossPose, t: number): BossP
   out.stretch = THREE.MathUtils.lerp(a.stretch, b.stretch, t);
   out.squash = THREE.MathUtils.lerp(a.squash, b.squash, t);
   out.glow = THREE.MathUtils.lerp(a.glow, b.glow, t);
+  out.swing = THREE.MathUtils.lerp(a.swing, b.swing, t);
+  out.headTilt = THREE.MathUtils.lerp(a.headTilt, b.headTilt, t);
   return out;
 };
 
@@ -122,6 +130,7 @@ function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number): Bos
     lerpBossPose(out, BOSS_REST, BOSS_COIL, easeIn(u) * 0.7 + easeOut(u) * 0.3);
     const tremble = THREE.MathUtils.smoothstep(u, 0.7, 1) * Math.sin(timeMs / 22) * 0.035;
     out.lean += tremble;
+    out.swing += tremble * 2;
     out.glow = u * u;
     return out;
   }
@@ -132,8 +141,67 @@ function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number): Bos
     return out;
   }
   const u = current.t / timing.recoverMs;
+  // Ranged moves have no active window, so the swing snaps forward at the start of recovery.
+  if (timing.activeMs === 0) {
+    const snap = easeOut(u * 4);
+    lerpBossPose(out, BOSS_COIL, strike, snap);
+    if (snap >= 1) lerpBossPose(out, strike, BOSS_REST, holdThenEase(u, 0.4));
+    return out;
+  }
   lerpBossPose(out, strike, BOSS_REST, holdThenEase(u, 0.35));
   return out;
+}
+
+/**
+ * Procedural boss rig: the GLBs are flat lists of named meshes, so we gather the striking limb and the head
+ * into pivot groups and swing those from the sim's telegraph/active/recover windows.
+ */
+interface BossRig {
+  strike: THREE.Group | null;
+  head: THREE.Group | null;
+  kind: "arm" | "head" | "burst";
+}
+
+const RIG_RULES: Record<NemesisSpec["identity"]["silhouette"], { strike: RegExp; head: RegExp | null; kind: BossRig["kind"] }> = {
+  knight: { strike: /sword|pommel|crossguard|grip|gauntlet|forearm|upper arm/, head: /helm|visor|horn/, kind: "arm" },
+  colossus: { strike: /arm|gauntlet|fist|finger|shoulder shard|shoulder mantle/, head: /skull|crown horn|eye/, kind: "arm" },
+  seraph: { strike: /sword wing|wing blade|armoured arm|gauntlet/, head: /mask|eye|cheek/, kind: "arm" },
+  hound: { strike: /skull|jaw|canine|tooth|maw|amber eye|neck/, head: null, kind: "head" },
+  serpent: { strike: /skull|fang|hood|jaw|ember eye|neck/, head: null, kind: "head" },
+  swarm: { strike: /shard|splinter/, head: /heart|core/, kind: "burst" },
+};
+
+const EMPTY_RIG: BossRig = { strike: null, head: null, kind: "arm" };
+
+function gatherPivot(visual: THREE.Object3D, pattern: RegExp, anchor: "top" | "bottom" | "centre"): THREE.Group | null {
+  const meshes: THREE.Mesh[] = [];
+  visual.traverse((object) => {
+    if (object instanceof THREE.Mesh && pattern.test(object.name.toLowerCase())) meshes.push(object);
+  });
+  const first = meshes[0];
+  if (!first?.parent) return null;
+  visual.updateMatrixWorld(true);
+  const bounds = new THREE.Box3();
+  for (const mesh of meshes) bounds.expandByObject(mesh);
+  if (bounds.isEmpty()) return null;
+  const pivotWorld = bounds.getCenter(new THREE.Vector3());
+  if (anchor === "top") pivotWorld.y = bounds.max.y;
+  if (anchor === "bottom") pivotWorld.y = bounds.min.y;
+  const parent = first.parent;
+  const pivot = new THREE.Group();
+  pivot.name = "Procedural pivot";
+  parent.add(pivot);
+  pivot.position.copy(parent.worldToLocal(pivotWorld));
+  pivot.updateMatrixWorld(true);
+  for (const mesh of meshes) pivot.attach(mesh);
+  return pivot;
+}
+
+function buildBossRig(visual: THREE.Object3D, silhouette: NemesisSpec["identity"]["silhouette"]): BossRig {
+  const rule = RIG_RULES[silhouette];
+  const strike = gatherPivot(visual, rule.strike, rule.kind === "arm" ? "top" : rule.kind === "head" ? "bottom" : "centre");
+  const head = rule.head ? gatherPivot(visual, rule.head, "bottom") : null;
+  return { strike, head, kind: rule.kind };
 }
 
 function makeSlashArc(): THREE.Mesh {
@@ -191,6 +259,7 @@ function disposeAssetLibrary(library: AssetLibrary): void {
   const materials = new Set<THREE.Material>();
   const textures = new Set<THREE.Texture>();
   for (const gltf of [library.arena, library.player, ...Object.values(library.bosses)]) {
+    if (!gltf) continue;
     gltf.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       geometries.add(object.geometry);
@@ -277,10 +346,18 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   camera.lookAt(0, 1, 0);
   const accent = new THREE.Color("#7fdcff");
   const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
-  const staticSkyTexture = textureLoader.load(skyUrl);
-  staticSkyTexture.colorSpace = THREE.SRGBColorSpace;
-  staticSkyTexture.wrapS = THREE.RepeatWrapping;
-  staticSkyTexture.wrapT = THREE.ClampToEdgeWrapping;
+  const prepareSkyTexture = (texture: THREE.Texture) => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    texture.needsUpdate = true;
+  };
+  const staticSkyTexture = textureLoader.load(skyUrl, prepareSkyTexture);
+  prepareSkyTexture(staticSkyTexture);
   let generatedSkyTexture: THREE.Texture | null = null;
   let skyRequest = 0;
   const skyMaterial = new THREE.ShaderMaterial({
@@ -314,11 +391,14 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
           : mix(0.0, 0.37, skyHeight + 1.0);
         vec3 image = texture2D(skyTexture, vec2(skyUv.x, imageV)).rgb;
         float light = dot(image, vec3(0.2126, 0.7152, 0.0722));
-        float clouds = smoothstep(0.025, 0.74, light);
+        // Wide smoothstep keeps cloud detail instead of crushing it to a two-tone print.
+        float clouds = smoothstep(0.04, 1.15, light);
+        // The upper sky goes back to near-black so the horizon glow reads as a band, not a wash.
+        float zenith = smoothstep(0.12, 0.7, skyHeight);
         float band = exp(-pow((skyHeight + 0.03) * 5.5, 2.0));
-        vec3 base = mix(upper, horizon, band * 0.34);
-        vec3 tint = accent * mix(0.14, 0.82, light);
-        gl_FragColor = vec4(mix(base, tint, clouds) + accent * band * 0.16, 1.0);
+        vec3 base = mix(upper, horizon, band * 0.3);
+        vec3 tint = accent * mix(0.1, 0.5, light) * (1.0 - zenith * 0.85);
+        gl_FragColor = vec4(mix(base, tint, clouds) + accent * band * 0.12, 1.0);
       }
     `,
   });
@@ -401,6 +481,31 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   fracture.rotation.x = Math.PI / 2;
   fracture.position.y = 0.02;
   arenaRoot.add(fallbackPlatform, fracture);
+  // Hairline fractures in the slab glow faintly in the accent colour.
+  const floorCrackMaterial = new THREE.MeshBasicMaterial({ color: accent.clone().multiplyScalar(0.5), toneMapped: false });
+  // Radial vignette that sinks the platform rim into the fog instead of ending on a lit edge.
+  const edgeFadeMaterial = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: { fogTint: { value: new THREE.Color(0x05040a) } },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: `
+      uniform vec3 fogTint;
+      varying vec2 vUv;
+      void main() {
+        float r = length(vUv - 0.5) * 2.0;
+        float fade = smoothstep(0.62, 1.0, r);
+        gl_FragColor = vec4(fogTint, fade * 0.92);
+      }
+    `,
+  });
+  const edgeFade = new THREE.Mesh(new THREE.CircleGeometry(ARENA_RADIUS * 1.25, 64), edgeFadeMaterial);
+  edgeFade.rotation.x = -Math.PI / 2;
+  edgeFade.position.y = 0.035;
+  edgeFade.renderOrder = 1;
 
   const player = new THREE.Group();
   const playerVisualPivot = new THREE.Group();
@@ -464,6 +569,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const lastPlayerPosition = new THREE.Vector3();
   const pose: PlayerPose = { ...REST_POSE };
   const bossPoseNow: BossPose = { ...BOSS_REST };
+  let bossRig: BossRig = EMPTY_RIG;
   const rollAxis = new THREE.Vector3();
   const rollQuaternion = new THREE.Quaternion();
   const poseQuaternion = new THREE.Quaternion();
@@ -475,6 +581,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   let impactT = 1;
   let runeGroup: THREE.Group | null = null;
   let sigilMaterial: THREE.MeshBasicMaterial | null = null;
+  interface Debris { object: THREE.Object3D; baseY: number; phase: number; spin: THREE.Vector3 }
+  let debris: Debris[] = [];
+  const debrisEdgeMaterial = new THREE.MeshBasicMaterial({ color: accent.clone().multiplyScalar(0.28), side: THREE.BackSide, toneMapped: false });
 
   const createBlade = () => {
     const pivot = new THREE.Group();
@@ -502,6 +611,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     runes.name = "Rotating sigil";
     visual.add(runes);
     const runeMeshes: THREE.Object3D[] = [];
+    const debrisList: Debris[] = [];
     sigilMaterial = null;
     visual.traverse((object) => {
       const name = object.name.toLowerCase();
@@ -509,9 +619,38 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       if (name.includes("sigil") && object instanceof THREE.Mesh && object.material instanceof THREE.MeshBasicMaterial) {
         sigilMaterial = object.material;
       }
+      if (!(object instanceof THREE.Mesh)) return;
+      // The walkable slab is the one big lit surface; keep it deep blue-grey so the hero and decals carry the light.
+      if (name.includes("walkable") || name.includes("floor slab")) {
+        const source = object.material instanceof THREE.MeshToonMaterial ? object.material : null;
+        object.material = createToonMaterial(0x181b28, 0x04050b, { map: source?.map ?? undefined, normalMap: source?.normalMap ?? undefined });
+        object.userData.materialRole = "floor";
+      }
+      if (name.includes("hairline floor fracture")) {
+        object.material = floorCrackMaterial;
+        object.userData.materialRole = "floor_crack";
+        object.position.y += 0.01;
+      }
+      // Floating shards read as deliberate once they drift, turn slowly and carry a faint accent rim.
+      if (name.includes("floating debris")) {
+        for (const child of object.children) {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial && child.material.side === THREE.BackSide) {
+            child.material = debrisEdgeMaterial;
+            child.scale.setScalar(1.05);
+          }
+        }
+        debrisList.push({
+          object,
+          baseY: object.position.y,
+          phase: debrisList.length * 1.7,
+          spin: new THREE.Vector3(0.05 + (debrisList.length % 3) * 0.03, 0.08 + (debrisList.length % 4) * 0.02, 0.03).multiplyScalar(debrisList.length % 2 ? 1 : -1),
+        });
+      }
     });
     for (const object of runeMeshes) runes.attach(object);
     runeGroup = runes;
+    debris = debrisList;
+    arenaRoot.add(edgeFade);
   };
 
   const installPlayer = () => {
@@ -528,19 +667,22 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     if (clip) playerMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
   };
 
-  const installBoss = (spec: NemesisSpec) => {
+  const installBoss = (spec: NemesisSpec, keepSpawn = false) => {
+    const spawnBefore = bossSpawn;
     bossMixer?.stopAllAction();
     disposeGroup(bossVisualPivot);
     bossMaterials = [];
-    if (library) {
-      const asset = library.bosses[spec.identity.silhouette];
+    const asset = library?.bosses[spec.identity.silhouette];
+    if (asset) {
       const visual = instantiate(asset, spec.identity.palette, { outline: 0.024 });
       bossVisualPivot.add(visual);
+      bossRig = buildBossRig(visual, spec.identity.silhouette);
       bossMaterials = collectToonMaterials(visual);
       bossMixer = new THREE.AnimationMixer(visual);
       const clip = asset.animations[0];
       if (clip) bossMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
     } else {
+      bossRig = EMPTY_RIG;
       const [, accentHex, deepHex] = spec.identity.palette;
       const height = BOSS_HEIGHTS[spec.identity.silhouette];
       const body = new THREE.Mesh(
@@ -554,9 +696,26 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       bossVisualPivot.add(body, eye);
       bossMaterials = collectToonMaterials(bossVisualPivot);
     }
-    bossSpawn = 0;
-    bossVisualPivot.scale.setScalar(0.08);
-    bossVisualPivot.position.y = -2.1;
+    bossSpawn = keepSpawn ? spawnBefore : 0;
+    if (!keepSpawn) {
+      bossVisualPivot.scale.setScalar(0.08);
+      bossVisualPivot.position.y = -2.1;
+    }
+  };
+
+  const preloadBoss = async (spec: NemesisSpec, onProgress?: (fraction: number) => void) => {
+    await ready;
+    if (!library || disposed) return;
+    const { silhouette } = spec.identity;
+    const hadModel = !!library.bosses[silhouette];
+    try {
+      await library.loadBoss(silhouette, onProgress);
+    } catch (error) {
+      console.warn(`Nemesis ${silhouette} model could not be loaded; keeping the procedural stand-in.`, error);
+      return;
+    }
+    // The stand-in may already be on stage; swap the real model in without replaying the spawn.
+    if (!disposed && !hadModel && currentSpec?.identity.silhouette === silhouette) installBoss(currentSpec, true);
   };
 
   const applyAccent = (spec: NemesisSpec) => {
@@ -566,7 +725,11 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     (skyMaterial.uniforms.horizon!.value as THREE.Color).copy(color).multiplyScalar(0.16);
     emberMaterial.color.copy(color);
     rim.color.copy(color);
-    scene.fog = new THREE.FogExp2(color.clone().lerp(new THREE.Color("#05040a"), 0.86), 0.022);
+    const fogColor = color.clone().lerp(new THREE.Color("#05040a"), 0.86);
+    scene.fog = new THREE.FogExp2(fogColor, 0.022);
+    (edgeFadeMaterial.uniforms.fogTint!.value as THREE.Color).copy(fogColor);
+    floorCrackMaterial.color.copy(color).multiplyScalar(0.5);
+    debrisEdgeMaterial.color.copy(color).multiplyScalar(0.28);
     if (fracture.material instanceof THREE.MeshBasicMaterial) fracture.material.color.copy(color);
     arenaRoot.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
@@ -582,6 +745,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     currentSpec = spec;
     applyAccent(spec);
     installBoss(spec);
+    if (library && !library.bosses[spec.identity.silhouette]) void preloadBoss(spec);
   };
 
   const setSky = (url: string | null) => {
@@ -601,9 +765,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
           texture.dispose();
           return;
         }
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
+        prepareSkyTexture(texture);
         generatedSkyTexture = texture;
         skyMaterial.uniforms.skyTexture!.value = texture;
       },
@@ -624,7 +786,10 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     library = loaded;
     installArena();
     installPlayer();
-    if (currentSpec) installBoss(currentSpec);
+    if (currentSpec) {
+      installBoss(currentSpec);
+      void preloadBoss(currentSpec);
+    }
   }).catch((error: unknown) => {
     console.warn("Nemesis models could not be loaded; using procedural stand-ins.", error);
   });
@@ -715,6 +880,21 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     bossVisualPivot.rotation.x = bossPoseNow.lean;
     bossVisualPivot.position.z = bossPoseNow.lunge;
     bossVisualPivot.position.y = -2.1 * (1 - reveal) + bossPoseNow.rise + (b.invulnerableT > 0 ? Math.sin(state.timeMs / 90) * 0.15 + 0.4 : 0);
+    if (bossRig.strike) {
+      if (bossRig.kind === "burst") {
+        bossRig.strike.scale.setScalar(1 + bossPoseNow.headTilt * 0.9);
+        bossRig.strike.rotation.y = state.timeMs / 900 + bossPoseNow.headTilt * 1.5;
+      } else if (bossRig.kind === "head") {
+        bossRig.strike.rotation.x = bossPoseNow.headTilt * 1.2;
+        bossRig.strike.position.z = Math.max(0, bossPoseNow.headTilt) * 0.8;
+      } else {
+        bossRig.strike.rotation.x = bossPoseNow.swing;
+      }
+    }
+    if (bossRig.head) {
+      bossRig.head.rotation.x = bossPoseNow.headTilt * 0.5;
+      if (bossRig.kind === "burst") bossRig.head.scale.setScalar(1 + bossPoseNow.glow * 0.25);
+    }
 
     for (const entry of playerMaterials) {
       entry.material.emissive.copy(entry.emissive);
@@ -735,7 +915,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     toBoss.divideScalar(distance);
     const right = new THREE.Vector3(-toBoss.z, 0, toBoss.x);
     if (mode === "fight") {
-      desired.copy(player.position).addScaledVector(toBoss, -6.6).addScaledVector(right, 2.1).setY(3.9);
+      desired.copy(player.position).addScaledVector(toBoss, -6.8).addScaledVector(right, 4.2).setY(4.6);
       const focusHeight = currentSpec
         ? THREE.MathUtils.clamp(BOSS_HEIGHTS[currentSpec.identity.silhouette] * (2 / 3), 1.35, 2.8)
         : 2;
@@ -746,8 +926,8 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
         camera.position.lerp(desired, 1 - Math.exp(-step * 8));
       }
       // Frame both fighters: aim between the hero's chest and the boss's focus point so the hero stays in shot.
-      lookTarget.set(player.position.x, 1.3, player.position.z)
-        .lerp(new THREE.Vector3(boss.position.x, boss.position.y + focusHeight, boss.position.z), 0.62);
+      lookTarget.set(player.position.x, 1.2, player.position.z)
+        .lerp(new THREE.Vector3(boss.position.x, boss.position.y + focusHeight, boss.position.z), 0.66);
       camera.lookAt(lookTarget);
     } else {
       if (!reducedMotion.matches) attractAngle += step * 0.075;
@@ -784,6 +964,14 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       runeGroup.rotation.y = reducedMotion.matches ? 0 : elapsed * 0.08;
       runeGroup.scale.setScalar(reducedMotion.matches ? 1 : 1 + Math.sin(elapsed * 1.3) * 0.018);
     }
+    if (!reducedMotion.matches) {
+      for (const shard of debris) {
+        shard.object.position.y = shard.baseY + Math.sin(elapsed * 0.45 + shard.phase) * 0.35;
+        shard.object.rotation.x += shard.spin.x * step;
+        shard.object.rotation.y += shard.spin.y * step;
+        shard.object.rotation.z += shard.spin.z * step;
+      }
+    }
     if (sigilMaterial) sigilMaterial.opacity = reducedMotion.matches ? 0.3 : 0.3 + Math.sin(elapsed * 0.72) * 0.08;
     playerShadow.position.x = player.position.x;
     playerShadow.position.z = player.position.z;
@@ -799,6 +987,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     camera,
     ready,
     applySpec,
+    preloadBoss,
     setSky,
     setMode: (nextMode) => { mode = nextMode; },
     cameraRelative: (move) => {

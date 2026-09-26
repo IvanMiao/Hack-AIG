@@ -9,7 +9,7 @@ import serpentUrl from "../assets/models/boss_serpent.glb?url";
 import knightUrl from "../assets/models/boss_knight.glb?url";
 import swarmUrl from "../assets/models/boss_swarm.glb?url";
 import { addOutline, createToonMaterial } from "./materials";
-import { SILHOUETTES, type Silhouette } from "../spec/types";
+import type { Silhouette } from "../spec/types";
 
 export type MaterialRole =
   | "deep" | "shade" | "accent" | "bone" | "stone" | "stone_dark"
@@ -37,24 +37,43 @@ export const BOSS_MODEL_URLS: Record<Silhouette, string> = {
 export interface AssetLibrary {
   arena: GLTF;
   player: GLTF;
-  bosses: Record<Silhouette, GLTF>;
+  /** Boss models arrive on demand; only silhouettes that have been summoned are present. */
+  bosses: Partial<Record<Silhouette, GLTF>>;
+  loadBoss(silhouette: Silhouette, onProgress?: (fraction: number) => void): Promise<GLTF>;
 }
 
+/** Arena and player block first paint; each boss GLB is fetched the first time its silhouette is summoned. */
 export async function loadAssetLibrary(): Promise<AssetLibrary> {
   const loader = new GLTFLoader();
-  const [arena, player, ...bosses] = await Promise.all([
-    loader.loadAsync(arenaUrl),
-    loader.loadAsync(playerUrl),
-    ...SILHOUETTES.map((silhouette) => loader.loadAsync(BOSS_MODEL_URLS[silhouette])),
-  ]);
-  if (!arena || !player || bosses.length !== SILHOUETTES.length) {
-    throw new Error("The model library is incomplete.");
-  }
-  return {
-    arena,
-    player,
-    bosses: Object.fromEntries(SILHOUETTES.map((silhouette, index) => [silhouette, bosses[index]!])) as Record<Silhouette, GLTF>,
+  const [arena, player] = await Promise.all([loader.loadAsync(arenaUrl), loader.loadAsync(playerUrl)]);
+  const bosses: Partial<Record<Silhouette, GLTF>> = {};
+  const pending = new Map<Silhouette, Promise<GLTF>>();
+  const loadBoss = (silhouette: Silhouette, onProgress?: (fraction: number) => void): Promise<GLTF> => {
+    const cached = bosses[silhouette];
+    if (cached) {
+      onProgress?.(1);
+      return Promise.resolve(cached);
+    }
+    let request = pending.get(silhouette);
+    if (!request) {
+      request = loader
+        .loadAsync(BOSS_MODEL_URLS[silhouette], (event) => {
+          if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total));
+        })
+        .then((gltf) => {
+          bosses[silhouette] = gltf;
+          pending.delete(silhouette);
+          onProgress?.(1);
+          return gltf;
+        }, (error: unknown) => {
+          pending.delete(silhouette);
+          throw error;
+        });
+      pending.set(silhouette, request);
+    }
+    return request;
   };
+  return { arena, player, bosses, loadBoss };
 }
 
 export function instantiate(

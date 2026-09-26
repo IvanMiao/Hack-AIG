@@ -1,7 +1,3 @@
-import "@fontsource/cinzel/600.css";
-import "@fontsource/cinzel/700.css";
-import "@fontsource/ibm-plex-mono/400.css";
-import "@fontsource/ibm-plex-mono/500.css";
 import { requestAllAssets, type AssetBundle } from "./assetsClient";
 import { forge } from "./forgeClient";
 import { learn } from "./learnClient";
@@ -9,7 +5,7 @@ import { createGameAudio } from "./game/audio";
 import { createStage } from "./game/createStage";
 import { createCombatInput } from "./game/input";
 import { getFallbackSpec, PLAYER_MAX_HP, type NemesisSpec } from "./spec";
-import { createBattle, createInitialState, PLAYER, TICK_MS, type Battle, type BattleEvent, type DeathLog } from "./sim";
+import { BOSS, createBattle, createInitialState, PLAYER, TICK_MS, type Battle, type BattleEvent, type DeathLog } from "./sim";
 import { createRitual } from "./ui/ritual";
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -34,6 +30,7 @@ const status = $("incantation-status");
 const errorMessage = $("incantation-error");
 const counter = $("char-count");
 const bossHp = $("boss-hp");
+const bossPoise = $("boss-poise");
 const playerHp = $("player-hp");
 const playerStamina = $("player-stamina");
 const vigorValue = $("vigor-value");
@@ -52,6 +49,7 @@ const ritual = createRitual();
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const INTRO_PORTRAIT_MS = 5200;
+const INTRO_CARD_MS = 2500;
 let spec: NemesisSpec | null = null;
 let battle: Battle | null = null;
 let seed = 1;
@@ -60,6 +58,7 @@ let accumulator = 0;
 let subtitleTimer: number | undefined;
 let portraitTimer: number | undefined;
 let introTimer: number | undefined;
+let introHoldMs = 0;
 let introFadeTimer: number | undefined;
 let introSpoken = false;
 let summonToken = 0;
@@ -173,6 +172,13 @@ async function summon(
   ritual.revealSpec(result.spec);
   if (result.source === "fallback") ritual.setStatus("The rift was silent. A bound nightmare answers instead.");
 
+  // The boss GLB streams in behind the forge cards; if it never arrives the procedural stand-in fights instead.
+  const modelReady = stage.preloadBoss(result.spec, (fraction) => {
+    if (token === summonToken) ritual.markModel(fraction);
+  }).then(() => {
+    if (token === summonToken) ritual.markModel(1);
+  });
+
   await requestAllAssets(result.spec.code, {
     onReady: (bundle) => {
       if (token !== summonToken) return;
@@ -185,12 +191,14 @@ async function summon(
       ritual.failAsset(kind);
     },
   });
+  await modelReady;
   if (token === summonToken) setRitualBusy(false);
 }
 
 function syncPhasePips(phaseIndex: number) {
   for (const [index, pip] of [...document.querySelectorAll<HTMLElement>(".phase-pip")].entries()) {
     pip.classList.toggle("active", index === phaseIndex);
+    pip.classList.toggle("done", index < phaseIndex);
   }
 }
 
@@ -200,6 +208,7 @@ function startBattle(next: NemesisSpec) {
   battle = createBattle(next, seed);
   accumulator = 0;
   hitStopMs = 0;
+  introHoldMs = reducedMotion.matches ? 0 : INTRO_CARD_MS;
   stage.applySpec(next);
   stage.setMode("fight");
   document.documentElement.style.setProperty("--accent", next.art.accentHex);
@@ -232,7 +241,7 @@ function startBattle(next: NemesisSpec) {
       introCard.classList.remove("departing");
       fightPanel.classList.remove("intro-active");
     }, reducedMotion.matches ? 0 : 400);
-  }, reducedMotion.matches ? 0 : 2500);
+  }, reducedMotion.matches ? 0 : INTRO_CARD_MS);
   audio.playPhase(1);
   say(next.voice.lines.intro, 4500);
   showPortrait(INTRO_PORTRAIT_MS);
@@ -346,6 +355,10 @@ function syncHud() {
   if (!battle || !spec) return;
   const { player, boss } = battle.state;
   setProgress(bossHp, boss.hp, spec.stats.maxHp);
+  // Poise drains as the player lands hits; empty means a stagger is imminent. During the stagger it shows the refill.
+  const poiseLeft = boss.staggerT > 0 ? spec.stats.poise * (1 - boss.staggerT / BOSS.staggerMs) : spec.stats.poise - boss.poiseDamage;
+  setProgress(bossPoise, poiseLeft, spec.stats.poise);
+  bossPoise.parentElement?.classList.toggle("staggered", boss.staggerT > 0);
   setProgress(playerHp, player.hp, PLAYER_MAX_HP);
   setProgress(playerStamina, player.stamina, PLAYER.maxStamina);
   vigorValue.textContent = `${Math.ceil(player.hp)} / ${PLAYER_MAX_HP}`;
@@ -437,7 +450,11 @@ const loop = (now: number) => {
   last = now;
   const events: BattleEvent[] = [];
   if (battle) {
-    if (hitStopMs > 0) hitStopMs -= dt * 1000;
+    if (introHoldMs > 0) {
+      // The sim waits for the intro card; the player would otherwise be taking hits behind it.
+      introHoldMs -= dt * 1000;
+      combat.read();
+    } else if (hitStopMs > 0) hitStopMs -= dt * 1000;
     else {
       accumulator += dt * 1000;
       const inputNow = combat.read();

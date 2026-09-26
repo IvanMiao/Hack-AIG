@@ -4,7 +4,8 @@ import type { NemesisSpec } from "../spec";
 export type CardName = "form" | "temper" | "voice" | "arena";
 const CARD_NAMES: CardName[] = ["form", "temper", "voice", "arena"];
 const CARD_FOR_ASSET: Record<AssetKind, CardName> = { portrait: "form", music: "temper", voice: "voice", sky: "arena" };
-const TOTAL_TASKS = 4;
+/** Portrait, music, voice, sky, plus the boss model streaming in. */
+const TOTAL_TASKS = 5;
 const AUTO_ENTER_DELAY_MS = 1400;
 
 export interface Ritual {
@@ -13,6 +14,8 @@ export interface Ritual {
   revealSpec(spec: NemesisSpec): void;
   markAsset(bundle: AssetBundle): void;
   failAsset(kind: AssetKind): void;
+  /** Boss model download progress in [0, 1]; reaching 1 settles the model task. */
+  markModel(fraction: number): void;
   setStatus(text: string): void;
   onEnter(handler: () => void): void;
   hide(): void;
@@ -49,14 +52,20 @@ export function createRitual(): Ritual {
   const card = (name: CardName): HTMLElement => cards.get(name) as HTMLElement;
 
   let settled = 0;
+  let modelFraction = 0;
+  let modelSettled = false;
   let entered = false;
   let onEnterHandler: () => void = () => undefined;
 
-  const settle = () => {
-    settled += 1;
-    const value = Math.round((settled / TOTAL_TASKS) * 100);
+  const paint = () => {
+    const value = Math.round(((settled + (modelSettled ? 0 : modelFraction)) / TOTAL_TASKS) * 100);
     fill.style.width = `${value}%`;
     progress.setAttribute("aria-valuenow", String(value));
+  };
+
+  const settle = () => {
+    settled += 1;
+    paint();
     if (settled >= TOTAL_TASKS) window.setTimeout(() => { if (!entered && !enter.disabled) enter.click(); }, AUTO_ENTER_DELAY_MS);
   };
 
@@ -69,6 +78,8 @@ export function createRitual(): Ritual {
   return {
     begin(incantation) {
       settled = 0;
+      modelFraction = 0;
+      modelSettled = false;
       entered = false;
       fill.style.width = "0%";
       progress.setAttribute("aria-valuenow", "0");
@@ -112,6 +123,16 @@ export function createRitual(): Ritual {
       el.classList.add("failed");
       childOf(el, ".card-badge").textContent = "silent";
       settle();
+    },
+    markModel(fraction) {
+      if (modelSettled) return;
+      modelFraction = Math.max(modelFraction, Math.min(1, fraction));
+      if (modelFraction >= 1) {
+        modelSettled = true;
+        settle();
+      } else {
+        paint();
+      }
     },
     setStatus(value) { status.textContent = value; },
     onEnter(handler) { onEnterHandler = handler; },

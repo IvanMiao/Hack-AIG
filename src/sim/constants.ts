@@ -23,6 +23,8 @@ export const BOSS = {
   weaknessWindowMs: 1800,
   followUpTelegraphScale: 0.6,
   tauntEveryMs: 9000,
+  /** Grace before the very first move so the player can read the arena after the intro card. */
+  openingIdleMs: 3000,
   /** idle gap between moves, lerped by aggression: 0.1 → slow, 1 → relentless */
   idleMs: { slow: 1500, fast: 350 },
 } as const;

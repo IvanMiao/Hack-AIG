@@ -202,7 +202,10 @@ async function summon(incantation: string, forgeSpec: () => Promise<SummonResult
   stage.applySpec(result.spec);
   document.documentElement.style.setProperty("--accent", result.spec.art.accentHex);
   ritual.revealSpec(result.spec);
+  const baked = bakedBundles(result.spec.code);
+  const missingKinds = ASSET_KINDS.filter((kind) => !baked.some((bundle) => bundle.kind === kind));
   if (result.source === "fallback" && !chosen) ritual.setStatus("The rift was silent. A bound nightmare answers instead.");
+  else if (missingKinds.length === 0) ritual.setStatus(`${result.spec.identity.name} takes shape. Its voice, sky and music were bound long ago.`);
 
   // The boss GLB streams in behind the forge cards; if it never arrives the procedural stand-in fights instead.
   const modelReady = stage.preloadBoss(result.spec, (fraction) => {
@@ -212,12 +215,10 @@ async function summon(incantation: string, forgeSpec: () => Promise<SummonResult
   });
 
   // Bound nightmares ship their assets inside the build; only whatever was not baked goes to the Worker.
-  const baked = bakedBundles(result.spec.code);
   for (const bundle of baked) {
     applyAsset(bundle);
     ritual.markAsset(bundle);
   }
-  const missingKinds = ASSET_KINDS.filter((kind) => !baked.some((bundle) => bundle.kind === kind));
   await requestAllAssets(result.spec.code, {
     onReady: (bundle) => {
       if (token !== summonToken) return;

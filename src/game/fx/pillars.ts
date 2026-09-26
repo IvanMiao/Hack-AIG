@@ -60,6 +60,13 @@ export function createPillars(particles: ParticleSystem, accent: THREE.Color): P
     pillars.set(id, { id, root, body, band, hp, flash, tilt: new THREE.Vector3() });
   };
 
+  const remove = (pillar: PillarMesh) => {
+    object.remove(pillar.root);
+    pillar.body.material.dispose();
+    pillar.band.material.dispose();
+    pillars.delete(pillar.id);
+  };
+
   const shatter = (pillar: PillarMesh) => {
     const { x, z } = pillar.root.position;
     for (let i = 0; i < 11; i += 1) {
@@ -80,11 +87,12 @@ export function createPillars(particles: ParticleSystem, accent: THREE.Color): P
     at.set(x, 1.2, z);
     particles.burst(at, { count: 50, color: 0x8a8578, color2: 0x1b1a1d, speed: 4.5, spread: 0.9, dir: up, lifeMs: 1100, size: 0.3, gravity: 7, drag: 1.4 });
     particles.burst(at, { count: 24, color: accent, color2: 0xffffff, speed: 8, spread: 1, lifeMs: 420, size: 0.08, gravity: 12, drag: 3, stretch: 2.5 });
-    object.remove(pillar.root);
-    pillar.body.material.dispose();
-    pillar.band.material.dispose();
-    pillars.delete(pillar.id);
+    remove(pillar);
   };
+
+  /** A fresh sim reuses obstacle ids, so a pillar only matches an obstacle at the same spot with no more hp than it last showed. */
+  const matches = (pillar: PillarMesh, o: BattleState["arena"]["obstacles"][number]) =>
+    pillar.hp >= o.hp && Math.abs(pillar.root.position.x - o.pos.x) < 1e-3 && Math.abs(pillar.root.position.z - o.pos.z) < 1e-3;
 
   const sync = (state: BattleState, dt: number, events: readonly BattleEvent[]) => {
     for (const event of events) {
@@ -109,6 +117,10 @@ export function createPillars(particles: ParticleSystem, accent: THREE.Color): P
     }
     for (const o of state.arena.obstacles) {
       let pillar = pillars.get(o.id);
+      if (pillar && !matches(pillar, o)) {
+        remove(pillar);
+        pillar = undefined;
+      }
       if (!pillar) {
         raise(o.id, o.pos.x, o.pos.z, o.hp);
         pillar = pillars.get(o.id)!;
@@ -125,8 +137,9 @@ export function createPillars(particles: ParticleSystem, accent: THREE.Color): P
       pillar.flash.value = Math.max(0, pillar.flash.value - dt * 5);
       pillar.band.material.color.copy(accent);
     }
+    // The sim announces every break it makes; anything else missing belongs to a state that was swapped out, so it just goes.
     for (const pillar of [...pillars.values()]) {
-      if (!state.arena.obstacles.some((o) => o.id === pillar.id)) shatter(pillar);
+      if (!state.arena.obstacles.some((o) => o.id === pillar.id)) remove(pillar);
     }
     for (let i = shards.length - 1; i >= 0; i -= 1) {
       const s = shards[i]!;

@@ -19,6 +19,10 @@ export interface CodexBossContext {
   glow: number;
   /** negative = coiled / contracted, positive = striking outward */
   headTilt: number;
+  /** Limb/arm pivot of the shared boss pose (radians, 0 at rest, negative = raised): tips the cage into the strike. */
+  swing: number;
+  /** Body yaw of the shared boss pose (radians): the cage counter-rotates so sweeps read as a cut across. */
+  twist: number;
   hitFlash: number;
   weakness: boolean;
   staggered: boolean;
@@ -266,8 +270,10 @@ export function createCodexBoss(): CodexBoss {
     const tearing = ctx.moveType === "blink" && (ctx.telegraphing || ctx.glow > 0.3);
     hover.position.x = tearing && Math.random() < 0.35 ? (Math.random() - 0.5) * (0.4 + ctx.glow * 0.8) : damp(hover.position.x, 0, 25, dt);
     hover.scale.x = tearing && Math.random() < 0.25 ? 1 + (Math.random() - 0.5) * 0.5 : damp(hover.scale.x, 1, 20, dt);
-    hover.rotation.z = Math.sin(time * 0.9) * 0.03 + (ctx.staggered ? 0.25 : 0);
-    cage.rotation.y = damp(cage.rotation.y, ctx.staggered ? 0.3 : 0, 5, dt);
+    hover.rotation.z = Math.sin(time * 0.9) * 0.03 + (ctx.staggered ? 0.25 : 0) - ctx.twist * 0.35;
+    // Raised arm = cage tips back; the strike snaps it forward past level.
+    hover.rotation.x = damp(hover.rotation.x, (ctx.swing + 0.6) * 0.16, 18, dt);
+    cage.rotation.y = damp(cage.rotation.y, (ctx.staggered ? 0.3 : 0) - ctx.twist * 0.8, 5, dt);
 
     // Cursor: terminal blink at rest, solid while it "types" a telegraph, glitchy when hit or staggered.
     const blink = ctx.telegraphing || ctx.glow > 0.05 ? 1 : Math.floor(time / 0.53) % 2;

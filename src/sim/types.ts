@@ -2,15 +2,28 @@ import type { Move, MoveType } from "../spec";
 
 export interface Vec2 { x: number; z: number }
 
-export type PlayerAction = "idle" | "light" | "heavy" | "roll";
+export type PlayerAction = "idle" | "light" | "heavy" | "roll" | "hurt";
+
+export type PlayerCommand = "light" | "heavy" | "roll";
 
 export interface PlayerInput {
   move: Vec2;
+  /** edge-triggered: true on the tick the key went down */
   light: boolean;
   heavy: boolean;
   roll: boolean;
   /** flatline phases only; ignored while the arena is 3D */
   jump: boolean;
+  /** level-triggered: heavy is still held (charges the heavy past its windup) */
+  heavyHeld?: boolean;
+}
+
+export interface BufferedCommand {
+  kind: PlayerCommand;
+  /** stick direction at the time of the press (rolls use it) */
+  move: Vec2;
+  /** ms since the press */
+  age: number;
 }
 
 export interface PlayerState {
@@ -26,6 +39,23 @@ export interface PlayerState {
   attackLanded: boolean;
   staminaRegenDelay: number;
   hitFlash: number;
+  /** which hit of the light string the current/next light is (0-based) */
+  comboIndex: number;
+  /** ms since the last light hit finished; past PLAYER.comboResetMs the string restarts */
+  comboIdleT: number;
+  /** 0..1 charge of the heavy being wound up; frozen at release */
+  charge: number;
+  /** heavy is parked at the end of its windup while the button is held */
+  charging: boolean;
+  buffered: BufferedCommand | null;
+  /** ms of post-hit invulnerability remaining */
+  hurtT: number;
+  knockDir: Vec2;
+  knockT: number;
+  /** the current roll already produced its perfect dodge */
+  rollPerfect: boolean;
+  /** sim times of recent rolls (the boss reads these to punish panic rolling) */
+  recentRolls: number[];
   /** height of the feet above the floor; always 0 outside flatline phases */
   y: number;
   vy: number;
@@ -60,6 +90,8 @@ export interface BossState {
   weaknessT: number;
   lastMoveType: MoveType | null;
   hitFlash: number;
+  /** how many moves have been chosen so far this fight */
+  movesChosen: number;
 }
 
 export type HazardShape =
@@ -98,9 +130,10 @@ export interface Projectile {
 export type BattleEvent =
   | { type: "telegraph"; move: MoveType; ms: number }
   | { type: "moveActive"; move: MoveType }
-  | { type: "playerHit"; move: HazardSource; damage: number; hp: number }
-  | { type: "playerRoll"; dodged: boolean }
-  | { type: "bossHit"; damage: number; heavy: boolean; weakness: boolean; hp: number }
+  | { type: "playerHit"; move: HazardSource; damage: number; hp: number; dir: Vec2 }
+  | { type: "playerRoll"; dodged: boolean; perfect: boolean }
+  | { type: "playerAttack"; kind: "light" | "heavy"; combo: number; charge: number }
+  | { type: "bossHit"; damage: number; heavy: boolean; weakness: boolean; hp: number; combo: number; charge: number }
   | { type: "bossStagger" }
   | { type: "weaknessOpen"; ms: number }
   | { type: "phaseChange"; phaseIndex: number }

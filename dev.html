@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#05060a" />
+    <meta name="robots" content="noindex" />
+    <title>NEMESIS — Lab</title>
+    <link rel="stylesheet" href="/src/styles/hud.css" />
+    <link rel="stylesheet" href="/src/lab/lab.css" />
+  </head>
+  <body class="lab">
+    <canvas id="stage" aria-hidden="true"></canvas>
+    <div id="lab-hud">
+      <div class="lab-bars">
+        <div class="lab-bar" title="Player HP"><i id="lab-php"></i><span>HP</span></div>
+        <div class="lab-bar stamina" title="Player stamina"><i id="lab-pst"></i><span>ST</span></div>
+        <div class="lab-bar boss" title="Boss HP"><i id="lab-bhp"></i><span>BOSS</span></div>
+        <div class="lab-bar poise" title="Boss poise damage"><i id="lab-bpo"></i><span>POISE</span></div>
+      </div>
+      <div id="lab-timeline" class="lab-timeline" aria-label="Boss move timeline">
+        <div class="seg tele"><i id="lab-tl-tele"></i><span>TELEGRAPH</span></div>
+        <div class="seg act"><i id="lab-tl-act"></i><span>ACTIVE</span></div>
+        <div class="seg rec"><i id="lab-tl-rec"></i><span>RECOVER</span></div>
+        <b id="lab-tl-label">idle</b>
+      </div>
+      <pre id="lab-status" class="lab-status"></pre>
+      <ol id="lab-events" class="lab-events" aria-label="Recent battle events"></ol>
+      <p class="lab-keys">WASD move · J/LMB light · K/RMB heavy · Space roll · P pause · . step · [ ] slowmo · R reset · 1–8 force move · H hitboxes · C free cam</p>
+    </div>
+    <script type="module" src="/src/lab/main.ts"></script>
+  </body>
+</html>

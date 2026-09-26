@@ -9,6 +9,7 @@ import serpentUrl from "../assets/models/boss_serpent.glb?url";
 import knightUrl from "../assets/models/boss_knight.glb?url";
 import swarmUrl from "../assets/models/boss_swarm.glb?url";
 import { addOutline, createToonMaterial } from "./materials";
+import { repairBlankTextures } from "./textureRepair";
 import type { Silhouette } from "../spec/types";
 
 export type MaterialRole =
@@ -24,15 +25,6 @@ export function materialRole(name: string): MaterialRole | null {
   const candidate = name.replace(/\.\d+$/, "");
   return roles.has(candidate as MaterialRole) ? candidate as MaterialRole : null;
 }
-
-/** Hugging Face 🤗 hero: brand yellow body, orange darks, dark face features via `shade`, blush via `accent`/`glow`. */
-export const PLAYER_COLORS = {
-  cloth: "#ffd21e",
-  cloth_dark: "#ff9d00",
-  metal: "#8d93a6",
-  accent: "#ff7b6b",
-  emissive: "#2a1f05",
-} as const;
 
 export const BOSS_MODEL_URLS: Record<Silhouette, string> = {
   colossus: colossusUrl,
@@ -55,6 +47,8 @@ export interface AssetLibrary {
 export async function loadAssetLibrary(): Promise<AssetLibrary> {
   const loader = new GLTFLoader();
   const [arena, player] = await Promise.all([loader.loadAsync(arenaUrl), loader.loadAsync(playerUrl)]);
+  repairBlankTextures(arena);
+  repairBlankTextures(player);
   const bosses: Partial<Record<Silhouette, GLTF>> = {};
   const pending = new Map<Silhouette, Promise<GLTF>>();
   const loadBoss = (silhouette: Silhouette, onProgress?: (fraction: number) => void): Promise<GLTF> => {
@@ -70,6 +64,7 @@ export async function loadAssetLibrary(): Promise<AssetLibrary> {
           if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total));
         })
         .then((gltf) => {
+          repairBlankTextures(gltf);
           bosses[silhouette] = gltf;
           pending.delete(silhouette);
           onProgress?.(1);
@@ -93,7 +88,7 @@ export function instantiate(
   const clone = template.scene.clone(true);
   clone.userData.assetClone = true;
   const [, accentHex = "#e9e4d8", deepHex = "#25212d"] = palette;
-  const accent = new THREE.Color(options.player ? PLAYER_COLORS.accent : accentHex);
+  const accent = new THREE.Color(options.player ? "#e9e4d8" : accentHex);
   const deep = new THREE.Color(deepHex);
   const shade = deep.clone().multiplyScalar(0.36);
   const colors: Record<MaterialRole, THREE.Color> = {
@@ -103,12 +98,12 @@ export function instantiate(
     bone: new THREE.Color("#d9d2c3"),
     stone: new THREE.Color("#2a2c38"),
     stone_dark: new THREE.Color("#14161f"),
-    cloth: new THREE.Color(options.player ? PLAYER_COLORS.cloth : "#1c1c26"),
-    cloth_dark: new THREE.Color(options.player ? PLAYER_COLORS.cloth_dark : "#0b0b10"),
-    metal: new THREE.Color(options.player ? PLAYER_COLORS.metal : "#5a5f6e"),
+    cloth: new THREE.Color(options.player ? "#4a4c60" : "#1c1c26"),
+    cloth_dark: new THREE.Color(options.player ? "#2a2b3a" : "#0b0b10"),
+    metal: new THREE.Color(options.player ? "#8d93a6" : "#5a5f6e"),
     glow: accent.clone(),
   };
-  const playerEmissive = new THREE.Color(PLAYER_COLORS.emissive);
+  const playerEmissive = new THREE.Color("#141626");
   const shared = new Map<string, THREE.Material>();
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x030308, side: THREE.BackSide });
   clone.traverse((object) => {

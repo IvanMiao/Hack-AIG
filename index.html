@@ -46,9 +46,12 @@
             <p id="incantation-help" class="helper">Ctrl/⌘+Enter to run</p>
             <div class="actions">
               <button id="summon-btn" class="primary" type="submit">RUN EVAL</button>
-              <button id="fallback-btn" type="button">Fight CODEX</button>
             </div>
           </form>
+          <div class="bound">
+            <p class="bound-label">— or pick a model that already escaped —</p>
+            <div id="bound-list" class="bound-list" role="list" aria-label="Escaped models"></div>
+          </div>
           <p id="incantation-status" class="status" role="status" aria-live="polite"></p>
         </section>
 

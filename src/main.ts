@@ -4,7 +4,7 @@ import { learn } from "./learnClient";
 import { createGameAudio } from "./game/audio";
 import { createStage } from "./game/createStage";
 import { createCombatInput } from "./game/input";
-import { getFallbackSpec, PLAYER_MAX_HP, type NemesisSpec } from "./spec";
+import { FALLBACK_SPECS, getFallbackSpec, getFallbackSpecByCode, PLAYER_MAX_HP, type NemesisSpec } from "./spec";
 import { BOSS, createBattle, createInitialState, PLAYER, TICK_MS, type Battle, type BattleEvent, type DeathLog } from "./sim";
 import { createRitual } from "./ui/ritual";
 
@@ -22,7 +22,7 @@ const outcomePanel = $("outcome");
 const form = $<HTMLFormElement>("incantation-form");
 const input = $<HTMLTextAreaElement>("incantation-input");
 const summonButton = $<HTMLButtonElement>("summon-btn");
-const fallbackButton = $<HTMLButtonElement>("fallback-btn");
+const boundList = $("bound-list");
 const retryButton = $<HTMLButtonElement>("retry-btn");
 const newButton = $<HTMLButtonElement>("new-btn");
 const retreatButton = $<HTMLButtonElement>("retreat-btn");
@@ -101,7 +101,7 @@ function validateIncantation(required: boolean): boolean {
 function setRitualBusy(busy: boolean) {
   ritualPanel.setAttribute("aria-busy", String(busy));
   input.disabled = busy;
-  fallbackButton.disabled = busy;
+  for (const card of boundList.querySelectorAll<HTMLButtonElement>("button")) card.disabled = busy;
   for (const chip of document.querySelectorAll<HTMLButtonElement>(".example-chip")) chip.disabled = busy;
   summonButton.disabled = busy;
   if (busy) {
@@ -147,6 +147,7 @@ function applyAsset(bundle: AssetBundle) {
 async function summon(
   incantation: string,
   forgeSpec: () => Promise<{ spec: NemesisSpec; source: "gemini" | "fallback" }>,
+  chosen = false,
 ) {
   const token = ++summonToken;
   introSpoken = false;
@@ -170,7 +171,7 @@ async function summon(
   stage.applySpec(result.spec);
   document.documentElement.style.setProperty("--accent", result.spec.art.accentHex);
   ritual.revealSpec(result.spec);
-  if (result.source === "fallback") ritual.setStatus("The forge timed out. CODEX answers the prompt instead.");
+  if (result.source === "fallback" && !chosen) ritual.setStatus("The forge timed out. CODEX answers the prompt instead.");
 
   // The boss GLB streams in behind the forge cards; if it never arrives the procedural stand-in fights instead.
   const modelReady = stage.preloadBoss(result.spec, (fraction) => {
@@ -405,10 +406,22 @@ form.addEventListener("submit", (event) => {
   void summon(incantation, () => forge(incantation));
 });
 
-fallbackButton.addEventListener("click", () => {
-  const bound = getFallbackSpec();
-  void summon(bound.identity.incantation, () => Promise.resolve({ spec: bound, source: "fallback" }));
-});
+for (const bound of FALLBACK_SPECS) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "bound-card";
+  card.setAttribute("role", "listitem");
+  card.style.setProperty("--bound-accent", bound.art.accentHex);
+  card.innerHTML = `<strong></strong><em></em><span></span>`;
+  card.querySelector("strong")!.textContent = bound.identity.name;
+  card.querySelector("em")!.textContent = bound.identity.title;
+  card.querySelector("span")!.textContent = `${bound.identity.silhouette} · ${bound.identity.element}`;
+  card.addEventListener("click", () => {
+    const chosen = getFallbackSpecByCode(bound.code) ?? getFallbackSpec();
+    void summon(chosen.identity.incantation, () => Promise.resolve({ spec: chosen, source: "fallback" }), true);
+  });
+  boundList.append(card);
+}
 
 input.addEventListener("input", () => {
   updateCounter();

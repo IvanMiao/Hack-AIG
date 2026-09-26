@@ -22,11 +22,11 @@ export interface Palette {
 }
 
 const BASE: Record<Element, Palette> = {
-  fire:  { bg: "#0a0504", fog: "#1a0906", floor: "#231a16", accent: "#ff6a2b", hot: "#ffd27a", rim: "#ff9a5c", bone: "#efe2c8", deep: "#2a1410" },
-  ice:   { bg: "#03070c", fog: "#071521", floor: "#171d27", accent: "#7fdcff", hot: "#eaffff", rim: "#9be4ff", bone: "#e9e4d8", deep: "#101a2c" },
-  void:  { bg: "#06030c", fog: "#0f0819", floor: "#1b1624", accent: "#a86bff", hot: "#e9d5ff", rim: "#c39bff", bone: "#e6dfe9", deep: "#1c1030" },
-  blood: { bg: "#0a0306", fog: "#1a060e", floor: "#231518", accent: "#ff2d6f", hot: "#ffb4c8", rim: "#ff6b98", bone: "#efdcd6", deep: "#2a0c17" },
-  storm: { bg: "#040704", fog: "#0a1409", floor: "#171e17", accent: "#c8ff4a", hot: "#f4ffb0", rim: "#d9ff85", bone: "#e8ecd8", deep: "#14200f" },
+  fire:  { bg: "#0a0504", fog: "#1a0906", floor: "#5a463c", accent: "#ff6a2b", hot: "#ffd27a", rim: "#ff9a5c", bone: "#efe2c8", deep: "#2a1410" },
+  ice:   { bg: "#03070c", fog: "#071521", floor: "#46505e", accent: "#7fdcff", hot: "#eaffff", rim: "#9be4ff", bone: "#e9e4d8", deep: "#101a2c" },
+  void:  { bg: "#06030c", fog: "#0f0819", floor: "#4c4458", accent: "#a86bff", hot: "#e9d5ff", rim: "#c39bff", bone: "#e6dfe9", deep: "#1c1030" },
+  blood: { bg: "#0a0306", fog: "#1a060e", floor: "#584046", accent: "#ff2d6f", hot: "#ffb4c8", rim: "#ff6b98", bone: "#efdcd6", deep: "#2a0c17" },
+  storm: { bg: "#040704", fog: "#0a1409", floor: "#465046", accent: "#c8ff4a", hot: "#f4ffb0", rim: "#d9ff85", bone: "#e8ecd8", deep: "#14200f" },
 };
 
 const hsl = { h: 0, s: 0, l: 0 };

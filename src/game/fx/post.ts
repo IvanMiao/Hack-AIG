@@ -63,7 +63,7 @@ void main() {
 
   float vig = smoothstep(0.95, 0.25, r * (1.0 + uVignette * 0.6));
   col *= mix(1.0, vig, uVignette);
-  col = mix(col, col + uPulseColor * (r * r * 3.0), uPulse * 0.8);
+  col = mix(col, col + uPulseColor * (r * r * 1.4), uPulse * 0.55);
 
   float g = (hash(uv * uResolution) - 0.5) * uGrain;
   col += g * (0.6 + 0.4 * (1.0 - luma));

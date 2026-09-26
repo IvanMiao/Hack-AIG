@@ -37,7 +37,7 @@ export interface StageDebug {
 }
 
 export const DEFAULT_TUNING = (): StageTuning => ({
-  lights: { hemisphere: 1.35, key: 3.6, rim: 3.4, fill: 1.5, heroLamp: 14, pool: 420, poolRadius: 9 },
+  lights: { hemisphere: 1.35, key: 3.6, rim: 3.4, fill: 1.5, heroLamp: 14, pool: 320, poolRadius: 9 },
   rim: { strength: 0.85, power: 3.2 },
   fog: { density: 0.022 },
   camera: { fov: 55, distance: 6.8, side: 4.2, height: 4.6, lag: 8, shake: 0.6, punch: 1 },
@@ -449,7 +449,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         vec3 tint = accent * mix(0.1, 0.5, light) * (1.0 - zenith * 0.85);
         vec3 sky = mix(base, tint, clouds) + accent * band * 0.12;
         // Sky colours are authored as display values; the composer treats this as linear, so decode.
-        gl_FragColor = vec4(pow(max(sky, 0.0), vec3(2.2)), 1.0);
+        gl_FragColor = vec4(pow(max(sky, 0.0), vec3(1.7)), 1.0);
       }
     `,
   });
@@ -553,7 +553,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       void main() {
         float r = length(vUv - 0.5) * 2.0;
         float fade = smoothstep(0.62, 1.0, r);
-        gl_FragColor = vec4(pow(fogTint, vec3(2.2)), fade * 0.92);
+        gl_FragColor = vec4(pow(fogTint, vec3(1.7)), fade * 0.92);
       }
     `,
   });

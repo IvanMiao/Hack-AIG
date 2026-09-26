@@ -16,7 +16,7 @@ export const PLAYER = {
 
 export const BOSS = {
   radius: 1.1,
-  walkSpeed: 2.6,
+  walkSpeed: 3.4,
   meleeRange: 3.2,
   staggerMs: 1400,
   phaseChangeInvulnMs: 1600,

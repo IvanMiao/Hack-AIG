@@ -5,6 +5,7 @@ import { createHazardView } from "./hazardView";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
+import { nextCameraYaw } from "./cameraFollow";
 import type { NemesisSpec } from "../spec";
 import { ARENA_RADIUS, BOSS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
@@ -639,6 +640,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   let bossSpawn = 1;
   let attractAngle = 0;
   let first = true;
+  let cameraYaw: number | null = null;
   let shake = 0;
   const shakeOffset = new THREE.Vector3();
   const toBoss = new THREE.Vector3();
@@ -1055,8 +1057,9 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
 
     hazards.sync(state);
     toBoss.subVectors(boss.position, player.position).setY(0);
-    const distance = toBoss.length() || 1;
-    toBoss.divideScalar(distance);
+    if (mode === "fight") cameraYaw = nextCameraYaw(cameraYaw, toBoss.x, toBoss.z, step, p.action === "roll");
+    if (cameraYaw !== null && mode === "fight") toBoss.set(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
+    else toBoss.normalize();
     const right = new THREE.Vector3(-toBoss.z, 0, toBoss.x);
 
     hemisphere.intensity = tuning.lights.hemisphere;
@@ -1176,7 +1179,10 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     applySpec,
     preloadBoss,
     setSky,
-    setMode: (nextMode) => { mode = nextMode; },
+    setMode: (nextMode) => {
+      cameraYaw = null;
+      mode = nextMode;
+    },
     cameraRelative: (move) => {
       camera.getWorldDirection(cameraForward).setY(0);
       if (cameraForward.lengthSq() < 1e-6) return move;

@@ -94,6 +94,9 @@ export type BattleEvent =
   | { type: "weaknessOpen"; ms: number }
   | { type: "phaseChange"; phaseIndex: number }
   | { type: "arenaShrink"; from: number; to: number; ms: number }
+  | { type: "obstaclesRaised"; ids: number[] }
+  | { type: "obstacleHit"; id: number; hpLeft: number; by: HazardSource }
+  | { type: "obstacleBroken"; id: number; pos: Vec2; by: HazardSource }
   | { type: "taunt"; index: number }
   | { type: "playerDeath"; lineIndex: number }
   | { type: "bossDefeat" };
@@ -116,6 +119,19 @@ export interface DeathLog {
   bossHpFractionAtDeath: number;
 }
 
+/** What dealt damage: a boss move, or the arena itself (collapsing rim, element hazards). */
+export type HazardSource = MoveType | "arena";
+
+/** Breakable cover: a solid disc both fighters slide around; blocks projectiles, chipped by boss strikes. */
+export interface Obstacle {
+  id: number;
+  pos: Vec2;
+  radius: number;
+  hp: number;
+  /** ms since it rose; solid only once past the rise */
+  age: number;
+}
+
 /** Runtime arena: the playable disc can shrink mid-fight; visuals read `radius`, clamps read it every tick. */
 export interface ArenaState {
   radius: number;
@@ -124,6 +140,7 @@ export interface ArenaState {
   /** ms elapsed in the current shrink; equals `shrinkMs` once settled */
   shrinkT: number;
   shrinkMs: number;
+  obstacles: Obstacle[];
 }
 
 export interface BattleState {

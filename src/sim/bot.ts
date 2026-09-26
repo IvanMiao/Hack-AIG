@@ -1,9 +1,9 @@
 import type { NemesisSpec } from "../spec";
-import { createBattle, IDLE_INPUT } from "./battle";
+import { blockedByObstacle, createBattle, IDLE_INPUT } from "./battle";
 import { BOSS, PLAYER } from "./constants";
 import { createRng } from "./rng";
 import type { BattleEvent, BattleState, DeathLog, Outcome, PlayerInput } from "./types";
-import { dist, norm, perp, scale, sub, vec } from "./vec";
+import { add, dist, dot, norm, perp, scale, sub, vec } from "./vec";
 
 export interface BotProfile {
   /** ms after a telegraph starts before the bot may react */
@@ -50,13 +50,42 @@ export function simulateBattle(spec: NemesisSpec, seed: number, profile: BotProf
     if (e.type === "phaseChange") circleSign *= -1;
   }
 
-  function decide(s: BattleState, _spec: NemesisSpec, prof: BotProfile): PlayerInput {
+  /** Keep a walk from grinding into cover: slide along the pillar's tangent, keeping the intended heading. */
+  function steer(s: BattleState, move: PlayerInput["move"]): PlayerInput["move"] {
+    const p = s.player.pos;
+    const cover = blockedByObstacle(p, add(p, move, 1.6), s.arena.obstacles, PLAYER.radius + 0.1);
+    if (!cover) return move;
+    const side = perp(norm(sub(cover.pos, p)));
+    return scale(side, dot(side, move) >= 0 ? 1 : -1);
+  }
+
+  function decide(s: BattleState, spec: NemesisSpec, prof: BotProfile): PlayerInput {
+    const input = decideRaw(s, spec, prof);
+    if (s.arena.obstacles.length > 0 && !input.roll) input.move = steer(s, input.move);
+    return input;
+  }
+
+  function decideRaw(s: BattleState, _spec: NemesisSpec, prof: BotProfile): PlayerInput {
     const p = s.player;
     const b = s.boss;
     const toBoss = norm(sub(b.pos, p.pos));
     const d = dist(p.pos, b.pos) - BOSS.radius;
     const current = b.current;
     const input: PlayerInput = { ...IDLE_INPUT, move: vec() };
+
+    // Volley telegraphed and cover nearby: duck behind the pillar instead of gambling on a sidestep.
+    if (current?.phase === "telegraph" && current.move.type === "volley") {
+      let best: { pos: PlayerInput["move"]; d: number } | null = null;
+      for (const o of s.arena.obstacles) {
+        const spot = add(o.pos, norm(sub(o.pos, b.pos)), o.radius + PLAYER.radius + 0.35);
+        const far = dist(spot, p.pos);
+        if (far < 7 && (!best || far < best.d)) best = { pos: spot, d: far };
+      }
+      if (best) {
+        if (best.d > 0.25) input.move = norm(sub(best.pos, p.pos));
+        return input;
+      }
+    }
 
     if (telegraphAge !== null && current?.phase === "telegraph") {
       telegraphAge += 1000 / 60;

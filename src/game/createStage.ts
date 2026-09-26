@@ -6,6 +6,7 @@ import { createHFHero, type HFHero } from "./hfHero";
 import { createCodexBoss, type CodexBoss } from "./codexBoss";
 import { createPostFX, DEFAULT_POST, type PostSettings } from "./fx/post";
 import { createParticles } from "./fx/particles";
+import { createPillars } from "./fx/pillars";
 import { createRimCollapse } from "./fx/rimCollapse";
 import { DEFAULT_PALETTE, resolvePalette, type Palette } from "./render/palette";
 import { nextCameraYaw } from "./cameraFollow";
@@ -397,7 +398,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
   const post = createPostFX(renderer, scene, camera, tuning.post);
   const particles = createParticles(camera, accent);
   const rimCollapse = createRimCollapse(particles);
-  scene.add(rimCollapse.object);
+  const pillars = createPillars(particles, accent);
+  scene.add(rimCollapse.object, pillars.object);
   scene.add(particles.object);
   const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
   const prepareSkyTexture = (texture: THREE.Texture) => {
@@ -971,6 +973,8 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
         shake = Math.max(shake, 0.5);
         rimCollapse.collapse(event.from, event.to, event.ms);
       }
+      if (event.type === "obstaclesRaised") shake = Math.max(shake, 0.3);
+      if (event.type === "obstacleBroken") shake = Math.max(shake, 0.28);
       if (event.type === "bossStagger" && fxOn) {
         burstAt.copy(boss.position).setY(0.4);
         particles.burst(burstAt, { count: 40, color: 0x8a8578, color2: 0x1b1a1d, speed: 4, spread: 0.8, dir: UP, lifeMs: 800, size: 0.2, gravity: 8, drag: 1.5 });
@@ -1230,6 +1234,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     fracture.scale.setScalar(rimScale);
     edgeFadeMaterial.uniforms.cut!.value = state.arena.radius < ARENA_RADIUS - 1e-3 ? rimScale / 1.25 : 2;
     rimCollapse.update(reducedMotion.matches ? step * 3 : step);
+    pillars.sync(state, step, events);
     particles.ambient(fxOn && tuning.fx.ambient);
     particles.update(step);
     post.render(step);
@@ -1290,6 +1295,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       for (const texture of textures) texture.dispose();
       if (library) disposeAssetLibrary(library);
       rimCollapse.dispose();
+      pillars.dispose();
       particles.dispose();
       post.dispose();
       renderer.dispose();

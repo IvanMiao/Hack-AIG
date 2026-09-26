@@ -1,8 +1,8 @@
 import type { Move, MoveType, NemesisSpec, Phase } from "../spec";
-import { ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
+import { ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN, TICK_MS } from "./constants";
 import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
-import type { ArenaState, BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
+import type { ArenaState, BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, HazardSource, Obstacle, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
 import { add, clampToDisc, dist, dot, len, norm, perp, rotate, scale, sub, vec } from "./vec";
 
 /** Lab-only switches. All default off; the shipped game never touches them. */
@@ -41,10 +41,8 @@ const emptyLog = (): DeathLog => ({
 });
 
 export function createInitialState(spec: NemesisSpec, seed: number): BattleState {
-  const arena: ArenaState = { radius: ARENA_RADIUS, targetRadius: ARENA_RADIUS, shrinkFrom: ARENA_RADIUS, shrinkT: 0, shrinkMs: 0 };
-  const opening = spec.phases[0];
-  if (opening) applyPhaseRule(arena, opening, null);
-  return {
+  const arena: ArenaState = { radius: ARENA_RADIUS, targetRadius: ARENA_RADIUS, shrinkFrom: ARENA_RADIUS, shrinkT: 0, shrinkMs: 0, obstacles: [] };
+  const state: BattleState = {
     seed,
     arena,
     timeMs: 0,
@@ -63,13 +61,39 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
     log: emptyLog(),
     tauntT: BOSS.tauntEveryMs * 0.6,
   };
+  const opening = spec.phases[0];
+  if (opening) applyPhaseRule(state, opening, null);
+  return state;
 }
 
 /**
  * Arena side of a phase rule. `closing_ring` shrinks the disc; with `events` the shrink eases in over
  * `ARENA_SHRINK.shrinkMs` and is announced, without (opening phase) it applies instantly.
+ * `pillars` raises a ring of breakable cover around the fighters, replacing any cover still standing.
  */
-export function applyPhaseRule(arena: ArenaState, phase: Phase, events: BattleEvent[] | null): void {
+export function applyPhaseRule(state: BattleState, phase: Phase, events: BattleEvent[] | null): void {
+  const arena = state.arena;
+  if (phase.rule === "pillars") {
+    const centre = scale(add(state.player.pos, state.boss.pos), 0.5);
+    const axis = norm(sub(state.player.pos, state.boss.pos));
+    const limit = arena.targetRadius - PLAYER_EDGE_MARGIN - ARENA_PILLARS.radius - 0.5;
+    const ids: number[] = [];
+    arena.obstacles = [];
+    for (let i = 0; i < ARENA_PILLARS.count; i += 1) {
+      // Offset by half a step so no pillar sits on the line between the fighters at the moment it rises.
+      const dir = rotate(axis, (Math.PI * 2 * (i + 0.5)) / ARENA_PILLARS.count);
+      let pos = clampToDisc(add(centre, dir, ARENA_PILLARS.ring), limit);
+      for (const body of [state.player.pos, state.boss.pos]) {
+        const gap = ARENA_PILLARS.radius + BOSS.radius + 0.4;
+        if (dist(pos, body) < gap) pos = clampToDisc(add(body, norm(sub(pos, body), dir), gap), limit);
+      }
+      const obstacle: Obstacle = { id: state.nextId++, pos, radius: ARENA_PILLARS.radius, hp: ARENA_PILLARS.hp, age: events ? 0 : ARENA_PILLARS.riseMs };
+      arena.obstacles.push(obstacle);
+      ids.push(obstacle.id);
+    }
+    events?.push({ type: "obstaclesRaised", ids });
+    return;
+  }
   if (phase.rule !== "closing_ring") return;
   const to = Math.max(ARENA_SHRINK.minRadius, arena.targetRadius * ARENA_SHRINK.factor);
   if (to >= arena.targetRadius - 1e-6) return;
@@ -85,12 +109,48 @@ export function applyPhaseRule(arena: ArenaState, phase: Phase, events: BattleEv
   events.push({ type: "arenaShrink", from: arena.shrinkFrom, to, ms: arena.shrinkMs });
 }
 
-const stepArena = (arena: ArenaState) => {
+const solid = (o: Obstacle) => o.age >= ARENA_PILLARS.riseMs;
+
+/** Push a body of `radius` out of every standing pillar. Purely positional, so a chaser slides around cover. */
+export function separateFromObstacles(pos: Vec2, radius: number, obstacles: readonly Obstacle[]): Vec2 {
+  let out = pos;
+  for (const o of obstacles) {
+    if (!solid(o)) continue;
+    const gap = o.radius + radius;
+    const d = dist(out, o.pos);
+    if (d >= gap) continue;
+    out = add(o.pos, norm(sub(out, o.pos), { x: 0, z: 1 }), gap);
+  }
+  return out;
+}
+
+/** True when the segment a→b passes through a standing pillar (used by projectiles and the bot's cover check). */
+export function blockedByObstacle(a: Vec2, b: Vec2, obstacles: readonly Obstacle[], pad = 0): Obstacle | null {
+  const ab = sub(b, a);
+  const l2 = dot(ab, ab);
+  for (const o of obstacles) {
+    if (!solid(o)) continue;
+    const t = l2 < 1e-9 ? 0 : Math.max(0, Math.min(1, dot(sub(o.pos, a), ab) / l2));
+    if (dist(add(a, ab, t), o.pos) <= o.radius + pad) return o;
+  }
+  return null;
+}
+
+const stepArena = (state: BattleState, events: BattleEvent[]) => {
+  const arena = state.arena;
+  for (const o of arena.obstacles) o.age = Math.min(ARENA_PILLARS.riseMs, o.age + TICK_MS);
   if (arena.shrinkT >= arena.shrinkMs) return;
   arena.shrinkT = Math.min(arena.shrinkMs, arena.shrinkT + TICK_MS);
   const u = arena.shrinkT / arena.shrinkMs;
   const ease = u * u * (3 - 2 * u);
   arena.radius = arena.shrinkFrom + (arena.targetRadius - arena.shrinkFrom) * ease;
+  // Cover standing on the collapsing rim goes down with it.
+  const keep: Obstacle[] = [];
+  for (const o of arena.obstacles) {
+    if (len(o.pos) + o.radius > arena.radius - PLAYER_EDGE_MARGIN) events.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by: "arena" });
+    else keep.push(o);
+  }
+  arena.obstacles = keep;
 };
 
 const idleGap = (aggression: number) => BOSS.idleMs.slow + (BOSS.idleMs.fast - BOSS.idleMs.slow) * aggression;
@@ -123,6 +183,23 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const pendingEvents: BattleEvent[] = [];
   const tickAttack = (attack: typeof PLAYER.light | typeof PLAYER.heavy) => attack.windupMs + attack.activeMs + attack.recoverMs;
   const bossLimit = () => state.arena.radius - BOSS.radius - BOSS_EDGE_MARGIN;
+
+  const damageObstacle = (o: Obstacle, amount: number, by: HazardSource, events: BattleEvent[]) => {
+    o.hp -= amount;
+    if (o.hp > 0) {
+      events.push({ type: "obstacleHit", id: o.id, hpLeft: o.hp, by });
+      return;
+    }
+    state.arena.obstacles = state.arena.obstacles.filter((x) => x !== o);
+    events.push({ type: "obstacleBroken", id: o.id, pos: o.pos, by });
+  };
+
+  /** Strike hazards chip every pillar their shape covers the moment they land. */
+  const strikeObstacles = (shape: HazardShape, amount: number, by: MoveType, events: BattleEvent[]) => {
+    for (const o of [...state.arena.obstacles]) {
+      if (solid(o) && overlaps(shape, o.pos, o.radius)) damageObstacle(o, amount, by, events);
+    }
+  };
 
   // ---- player -------------------------------------------------------------------------------
   const rollDirectionLabel = (dir: Vec2, toBoss: Vec2): keyof DeathLog["rolls"] => {
@@ -183,7 +260,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       if (p.actionT >= tickAttack(attack)) p.action = "idle";
     }
 
-    p.pos = clampToDisc(p.pos, state.arena.radius - PLAYER_EDGE_MARGIN);
+    p.pos = clampToDisc(separateFromObstacles(p.pos, PLAYER.radius, state.arena.obstacles), state.arena.radius - PLAYER_EDGE_MARGIN);
     p.staminaRegenDelay = Math.max(0, p.staminaRegenDelay - TICK_MS);
     if (p.staminaRegenDelay === 0 && p.action !== "roll") p.stamina = Math.min(PLAYER.maxStamina, p.stamina + (PLAYER.staminaRegenPerSec * TICK_MS) / 1000);
     p.hitFlash = Math.max(0, p.hitFlash - TICK_MS);
@@ -286,15 +363,21 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     b.facing = dir;
     events.push({ type: "moveActive", move: move.type });
     switch (move.type) {
-      case "sweep":
-        spawnHazard("sweep", { kind: "arc", center: { ...b.pos }, radius: MOVE.sweep.radius * move.scale, dir, halfAngle: MOVE.sweep.halfAngle }, move.damage, MOVE.sweep.activeMs);
+      case "sweep": {
+        const h = spawnHazard("sweep", { kind: "arc", center: { ...b.pos }, radius: MOVE.sweep.radius * move.scale, dir, halfAngle: MOVE.sweep.halfAngle }, move.damage, MOVE.sweep.activeMs);
+        strikeObstacles(h.shape, ARENA_PILLARS.damage.sweep, "sweep", events);
         break;
-      case "thrust":
-        spawnHazard("thrust", { kind: "line", start: { ...b.pos }, dir, length: MOVE.thrust.length * move.scale, halfWidth: MOVE.thrust.halfWidth * move.scale }, move.damage, MOVE.thrust.activeMs);
+      }
+      case "thrust": {
+        const h = spawnHazard("thrust", { kind: "line", start: { ...b.pos }, dir, length: MOVE.thrust.length * move.scale, halfWidth: MOVE.thrust.halfWidth * move.scale }, move.damage, MOVE.thrust.activeMs);
+        strikeObstacles(h.shape, ARENA_PILLARS.damage.thrust, "thrust", events);
         break;
-      case "nova":
-        spawnHazard("nova", { kind: "circle", center: { ...b.pos }, radius: MOVE.nova.radius * move.scale }, move.damage, MOVE.nova.activeMs);
+      }
+      case "nova": {
+        const h = spawnHazard("nova", { kind: "circle", center: { ...b.pos }, radius: MOVE.nova.radius * move.scale }, move.damage, MOVE.nova.activeMs);
+        strikeObstacles(h.shape, ARENA_PILLARS.damage.nova, "nova", events);
         break;
+      }
       case "charge":
         current.travel = scale(dir, MOVE.charge.speed);
         break;
@@ -322,7 +405,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         break;
       case "blink": {
         const behind = norm(sub(state.player.pos, b.pos));
-        b.pos = clampToDisc(add(state.player.pos, behind, MOVE.blink.distanceBehind), bossLimit());
+        b.pos = clampToDisc(separateFromObstacles(add(state.player.pos, behind, MOVE.blink.distanceBehind), BOSS.radius, state.arena.obstacles), bossLimit());
         b.facing = scale(behind, -1);
         if (spec.weakness.trigger === "after_blink") openWeakness(events);
         break;
@@ -351,7 +434,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         state.hazards = [];
         state.projectiles = [];
         events.push({ type: "phaseChange", phaseIndex: i });
-        applyPhaseRule(state.arena, phase, events);
+        applyPhaseRule(state, phase, events);
         break;
       }
     }
@@ -369,7 +452,17 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         events.push({ type: "taunt", index: Math.floor(rng.next() * spec.voice.lines.taunt.length) });
       }
       b.facing = toPlayer;
-      if (dist(b.pos, p.pos) > BOSS.meleeRange) b.pos = clampToDisc(add(b.pos, toPlayer, (BOSS.walkSpeed * TICK_MS) / 1000), bossLimit());
+      if (dist(b.pos, p.pos) > BOSS.meleeRange) {
+        const stepLen = (BOSS.walkSpeed * TICK_MS) / 1000;
+        let next = add(b.pos, toPlayer, stepLen);
+        const cover = blockedByObstacle(b.pos, next, state.arena.obstacles, BOSS.radius);
+        if (cover) {
+          // Slide around cover instead of grinding into it: pick the tangent that keeps closing on the player.
+          const side = perp(norm(sub(cover.pos, b.pos)));
+          next = add(b.pos, side, stepLen * (dot(side, toPlayer) >= 0 ? 1 : -1));
+        }
+        b.pos = clampToDisc(separateFromObstacles(next, BOSS.radius, state.arena.obstacles), bossLimit());
+      }
       if (debug.bossAi && b.idleT >= b.idleFor && b.invulnerableT <= 0) {
         beginMove(chooseMove(phase), false, events);
         b.idleT = 0;
@@ -395,6 +488,9 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     if (current.phase === "active") {
       if (current.move.type === "charge") {
         b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), bossLimit());
+        for (const o of [...state.arena.obstacles]) {
+          if (solid(o) && dist(b.pos, o.pos) <= o.radius + MOVE.charge.hitRadius * current.move.scale) damageObstacle(o, ARENA_PILLARS.damage.charge, "charge", events);
+        }
         if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned) {
           current.spawned = true;
           hurtPlayer(current.move.damage, "charge", events);
@@ -435,8 +531,14 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
 
     const alive: Projectile[] = [];
     for (const pr of state.projectiles) {
+      const from = pr.pos;
       pr.pos = add(pr.pos, pr.vel, TICK_MS / 1000);
       if (len(pr.pos) > state.arena.radius + 1) continue;
+      const cover = blockedByObstacle(from, pr.pos, state.arena.obstacles, pr.radius);
+      if (cover) {
+        events.push({ type: "obstacleHit", id: cover.id, hpLeft: cover.hp, by: "volley" });
+        continue;
+      }
       if (dist(pr.pos, p.pos) <= pr.radius + PLAYER.radius) {
         hurtPlayer(pr.damage, "volley", events);
         continue;
@@ -451,7 +553,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     if (state.outcome !== "fighting") return events;
     if (pendingEvents.length > 0) events.push(...pendingEvents.splice(0));
     state.timeMs += TICK_MS;
-    stepArena(state.arena);
+    stepArena(state, events);
     stepPlayer(input, events);
     if (state.outcome !== "fighting") return events;
     stepBoss(events);

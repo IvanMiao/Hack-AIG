@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { getFallbackSpec, type NemesisSpec } from "../spec";
-import { createBattle, IDLE_INPUT } from "./battle";
+import { blockedByObstacle, createBattle, IDLE_INPUT } from "./battle";
 import { FALLBACK_SPECS } from "../spec/fallback";
 import { AVERAGE_BOT, calibrateDifficulty, DIFFICULTY_BAND, measureDifficulty, simulateBattle } from "./bot";
 import { overlaps } from "./hazard";
-import { ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, PLAYER, PLAYER_EDGE_MARGIN } from "./constants";
-import { len } from "./vec";
+import { ARENA_PILLARS, ARENA_RADIUS, ARENA_SHRINK, BOSS, BOSS_EDGE_MARGIN, PLAYER, PLAYER_EDGE_MARGIN } from "./constants";
+import { add, dist, len, norm, sub } from "./vec";
 import type { PlayerInput } from "./types";
 
 const spec = getFallbackSpec();
@@ -179,5 +179,98 @@ describe("closing_ring", () => {
     const a = simulateBattle(ringed(), 9);
     const c = simulateBattle(ringed(), 9);
     expect(a).toEqual(c);
+  });
+});
+
+describe("pillars", () => {
+  const pillared = (base: NemesisSpec = spec): NemesisSpec => {
+    const s = structuredClone(base);
+    s.phases[0]!.rule = "pillars";
+    return s;
+  };
+
+  it("raises solid cover on the opening phase, clear of both fighters", () => {
+    const b = createBattle(pillared(), 1);
+    const obstacles = b.state.arena.obstacles;
+    expect(obstacles).toHaveLength(ARENA_PILLARS.count);
+    for (const o of obstacles) {
+      expect(o.hp).toBe(ARENA_PILLARS.hp);
+      expect(dist(o.pos, b.state.player.pos)).toBeGreaterThan(o.radius + PLAYER.radius);
+      expect(dist(o.pos, b.state.boss.pos)).toBeGreaterThan(o.radius + BOSS.radius);
+      expect(len(o.pos) + o.radius).toBeLessThan(ARENA_RADIUS - PLAYER_EDGE_MARGIN);
+    }
+  });
+
+  it("pushes the player out of a pillar and blocks projectiles behind it", () => {
+    const b = createBattle(pillared(), 2);
+    b.debug.bossAi = false;
+    const o = b.state.arena.obstacles[0]!;
+    b.state.player.pos = { ...o.pos };
+    b.step(IDLE_INPUT);
+    expect(dist(b.state.player.pos, o.pos)).toBeGreaterThanOrEqual(o.radius + PLAYER.radius - 1e-6);
+
+    const away = norm(sub(o.pos, b.state.boss.pos));
+    b.state.player.pos = add(o.pos, away, o.radius + PLAYER.radius + 0.2);
+    expect(b.debug.forceMove("volley")).toBe(true);
+    const events = run(b, IDLE_INPUT, 4000);
+    expect(events.some((e) => e.type === "obstacleHit" && e.by === "volley")).toBe(true);
+    expect(events.some((e) => e.type === "playerHit")).toBe(false);
+    expect(o.hp).toBe(ARENA_PILLARS.hp);
+  });
+
+  it("charge smashes through cover and slides around it while walking", () => {
+    const b = createBattle(pillared(), 3);
+    b.debug.playerInvulnerable = true;
+    const o = b.state.arena.obstacles[0]!;
+    const toPillar = norm(sub(o.pos, b.state.boss.pos));
+    b.state.boss.pos = add(o.pos, toPillar, -3);
+    b.state.player.pos = add(o.pos, toPillar, 4);
+    expect(b.debug.forceMove("charge")).toBe(true);
+    const events = run(b, IDLE_INPUT, 3000);
+    expect(events.some((e) => e.type === "obstacleBroken" && e.by === "charge" && e.id === o.id)).toBe(true);
+    expect(b.state.arena.obstacles.some((x) => x.id === o.id)).toBe(false);
+
+    const walk = createBattle(pillared(), 3);
+    walk.debug.bossAi = false;
+    const cover = walk.state.arena.obstacles[0]!;
+    const axis = norm(sub(cover.pos, walk.state.boss.pos));
+    walk.state.boss.pos = add(cover.pos, axis, -4);
+    walk.state.player.pos = add(cover.pos, axis, 4);
+    const start = dist(walk.state.boss.pos, walk.state.player.pos);
+    run(walk, IDLE_INPUT, 3000);
+    expect(dist(walk.state.boss.pos, walk.state.player.pos)).toBeLessThan(start - 2);
+    for (const x of walk.state.arena.obstacles) expect(dist(walk.state.boss.pos, x.pos)).toBeGreaterThanOrEqual(x.radius + BOSS.radius - 1e-6);
+  });
+
+  it("phase-change pillars rise before turning solid, and strikes chip them", () => {
+    const s = structuredClone(spec);
+    s.phases[1]!.rule = "pillars";
+    const b = createBattle(s, 4);
+    b.debug.playerInvulnerable = true;
+    b.state.boss.hp = Math.floor(spec.stats.maxHp * 0.49);
+    const events = run(b, IDLE_INPUT, 50);
+    expect(events.some((e) => e.type === "obstaclesRaised")).toBe(true);
+    const o = b.state.arena.obstacles[0]!;
+    expect(blockedByObstacle(b.state.boss.pos, o.pos, b.state.arena.obstacles)).toBeNull();
+    run(b, IDLE_INPUT, ARENA_PILLARS.riseMs + 50);
+    expect(blockedByObstacle(b.state.boss.pos, o.pos, b.state.arena.obstacles)).toBe(o);
+    b.state.boss.pos = add(o.pos, norm(sub(b.state.boss.pos, o.pos)), o.radius + 1);
+    b.state.player.pos = { ...o.pos };
+    b.step(IDLE_INPUT);
+    expect(b.debug.forceMove("nova")).toBe(true);
+    const hits = run(b, IDLE_INPUT, 3000).filter((e) => e.type === "obstacleHit" && e.by === "nova" && e.id === o.id);
+    expect(hits).toHaveLength(1);
+    expect(o.hp).toBe(ARENA_PILLARS.hp - ARENA_PILLARS.damage.nova);
+  });
+
+  it("the bot never gets stuck on cover and stays in the difficulty band", () => {
+    for (const boss of FALLBACK_SPECS) {
+      for (const seed of [1, 2]) expect(simulateBattle(pillared(boss), seed).outcome, boss.code).not.toBe("fighting");
+    }
+    const report = measureDifficulty(pillared(), 24, AVERAGE_BOT);
+    expect(report.bossWinRate).toBeGreaterThanOrEqual(DIFFICULTY_BAND.min);
+    expect(report.bossWinRate).toBeLessThanOrEqual(DIFFICULTY_BAND.max);
+    const a = simulateBattle(pillared(), 9);
+    expect(a).toEqual(simulateBattle(pillared(), 9));
   });
 });

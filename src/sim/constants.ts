@@ -10,6 +10,16 @@ export const ARENA_SHRINK = {
   minRadius: ARENA_RADIUS * 0.5,
   shrinkMs: 4000,
 } as const;
+/** `pillars` phase rule: breakable cover raised around the fighters. Only boss strikes chip them; projectiles are blocked. */
+export const ARENA_PILLARS = {
+  count: 4,
+  radius: 1.0,
+  hp: 2,
+  /** distance from the player/boss midpoint at which the ring of pillars rises */
+  ring: 5.5,
+  riseMs: 900,
+  damage: { charge: 2, sweep: 1, thrust: 1, nova: 1 },
+} as const;
 
 export const PLAYER = {
   maxHp: 100,

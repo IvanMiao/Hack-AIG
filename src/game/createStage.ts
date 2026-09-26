@@ -853,6 +853,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       if (role === "floor" && object.material instanceof THREE.MeshToonMaterial) object.material.color.set(palette.floor);
     });
     hazards.setAccent(palette.accent);
+    hazards.setStyle(isCodexBout(spec) ? "terminal" : "void");
   };
 
   const applySpec = (spec: NemesisSpec) => {
@@ -1098,6 +1099,7 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
       weakness: b.weaknessT > 0,
       staggered: b.staggerT > 0,
       telegraphing: b.current?.phase === "telegraph",
+      moveType: b.current?.move.type ?? null,
       phaseIndex: b.phaseIndex,
       reducedMotion: reducedMotion.matches,
     });

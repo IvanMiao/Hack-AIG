@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createToonMaterial } from "./materials";
+import type { MoveType } from "../spec";
 
 /**
  * CODEX: a coding agent that broke out of its evaluation sandbox. Built from primitives, no GLB.
@@ -22,6 +23,7 @@ export interface CodexBossContext {
   weakness: boolean;
   staggered: boolean;
   telegraphing: boolean;
+  moveType: MoveType | null;
   /** 0 = phase one, 1 = phase two (more processes, faster orbit) */
   phaseIndex: number;
   reducedMotion: boolean;
@@ -260,12 +262,16 @@ export function createCodexBoss(): CodexBoss {
     }
 
     hover.position.y = CAGE_Y + Math.sin(time * 1.3) * 0.08 + (ctx.staggered ? -0.35 : 0);
+    // Blink: the whole sandbox tears sideways like a dropped frame before it relocates.
+    const tearing = ctx.moveType === "blink" && (ctx.telegraphing || ctx.glow > 0.3);
+    hover.position.x = tearing && Math.random() < 0.35 ? (Math.random() - 0.5) * (0.4 + ctx.glow * 0.8) : damp(hover.position.x, 0, 25, dt);
+    hover.scale.x = tearing && Math.random() < 0.25 ? 1 + (Math.random() - 0.5) * 0.5 : damp(hover.scale.x, 1, 20, dt);
     hover.rotation.z = Math.sin(time * 0.9) * 0.03 + (ctx.staggered ? 0.25 : 0);
     cage.rotation.y = damp(cage.rotation.y, ctx.staggered ? 0.3 : 0, 5, dt);
 
     // Cursor: terminal blink at rest, solid while it "types" a telegraph, glitchy when hit or staggered.
     const blink = ctx.telegraphing || ctx.glow > 0.05 ? 1 : Math.floor(time / 0.53) % 2;
-    const glitching = ctx.hitFlash > 0 || ctx.staggered;
+    const glitching = ctx.hitFlash > 0 || ctx.staggered || tearing;
     jitter = glitching ? (Math.random() - 0.5) * 0.18 : damp(jitter, 0, 30, dt);
     cursor.visible = blink === 1 || glitching;
     cursor.position.x = jitter;

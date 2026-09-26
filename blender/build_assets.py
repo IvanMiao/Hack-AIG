@@ -35,7 +35,7 @@ ROLES = {
 }
 PROFILES = {
     "arena": {"stone": "stone_floor", "stone_dark": "rock"},
-    "player": {"cloth": None, "cloth_dark": "cloth", "metal": "armor", "deep": None},
+    "player": {"cloth": "cloth", "cloth_dark": "cloth", "metal": "armor", "deep": "cloth"},
     "boss_colossus": {
         "deep": "rock", "shade": "rock", "stone": "rock", "stone_dark": "rock",
     },
@@ -97,6 +97,8 @@ def image_for(texture_id, normal=False):
             alpha=False,
         )
         image.pixels.foreach_set(scaled.pixels[:])
+        # Generated images have no file behind them; the glTF exporter writes them as solid black unless packed.
+        image.pack()
         bpy.data.images.remove(scaled)
     else:
         image = source
@@ -736,75 +738,77 @@ def torus(parent, name, role, pos, major, minor, rotation=None, segments=32):
     return finish(obj, role, parent, smooth=True)
 
 
-def hugging_hand(parent, sign, wrist, frames=FRAME_END):
-    """Open palm raised beside the face, fingers spread: the 🤗 gesture."""
-    pivot = bpy.data.objects.new("Hugging hand pivot", None)
-    bpy.context.scene.collection.objects.link(pivot)
-    pivot.parent = parent
-    pivot.location = wrist
-    palm = ellipsoid(pivot, "Open palm", "cloth", (sign * 0.02, 0, 0.07),
-                     (0.13, 0.055, 0.15), 12, 8)
-    for index in range(4):
-        spread = (index - 1.5) * 0.075
-        length = 0.19 - abs(index - 1.5) * 0.03
-        limb(pivot, "Spread finger", "cloth",
-             (sign * 0.02 + spread, 0, 0.17),
-             (sign * 0.02 + spread * 1.35, -0.02, 0.17 + length), 0.038, 0.8, 8)
-    limb(pivot, "Spread thumb", "cloth",
-         (sign * 0.12, 0, 0.05), (sign * 0.25, -0.03, 0.15), 0.042, 0.8, 8)
-    animate_object(pivot, rotations=((1, (0, 0, 0)), (frames // 2, (0.05, sign * -0.14, 0)),
-                                     (frames, (0, 0, 0))), frames=frames)
-    return pivot
-
-
 def build_player():
     root = clean_scene("player", "player")
-    # Big round 🤗 head is the whole read of the character: brand-yellow ball,
-    # squeezed happy eyes, wide smile, blush, and both open hands held beside it.
-    head = ellipsoid(root, "Hugging face", "cloth", (0, 0, 1.42), (0.5, 0.48, 0.5), 24, 16)
+    cloak_panel(root, "Tattered cloak", "cloth", 0, 1.52, 0.07, 0.68, 0.08, 0.19)
+    cloak_panel(root, "Outer cloak mantle", "cloth_dark", 0, 1.38, 0.16, 0.78, 0.19, 0.16)
     for sign in (-1, 1):
-        x = sign * 0.19
-        tapered_curve(root, "Happy eye", "deep",
-                      ((x - 0.1, -0.415, 1.51), (x, -0.45, 1.57), (x + 0.1, -0.415, 1.51)),
-                      (0.55, 1.0, 0.55), 0.028, 8)
-        ellipsoid(root, "Blush", "accent", (sign * 0.36, -0.33, 1.4), (0.085, 0.035, 0.055), 10, 6)
-    tapered_curve(root, "Wide smile", "deep",
-                  ((-0.25, -0.405, 1.3), (0, -0.46, 1.18), (0.25, -0.405, 1.3)),
-                  (0.5, 1.0, 0.5), 0.038, 10)
-    ellipsoid(root, "Open mouth", "shade", (0, -0.43, 1.23), (0.17, 0.04, 0.06), 12, 8)
-    # Compact hoodie body under the head, so the head stays the dominant shape.
-    ellipsoid(root, "Hoodie torso", "cloth_dark", (0, 0, 0.72), (0.34, 0.28, 0.36), 16, 10)
-    torus(root, "Hoodie collar", "cloth_dark", (0, -0.02, 0.98), 0.22, 0.06, (0, 0, 0), 20)
-    bevelled_box(root, "Kangaroo pocket", "cloth_dark", (0, -0.27, 0.6), (0.34, 0.08, 0.16), 0.03)
+        cloak_panel(root, "Split cloak tail", "cloth_dark", sign * 0.32, 1.05, 0.05,
+                    0.27, -0.13, 0.22)
+        limb(root, "Cloak fold", "cloth_dark",
+             (sign * 0.21, -0.12, 1.34), (sign * 0.39, -0.16, 0.15), 0.035, 0.28, 6)
+        for fold in range(3):
+            x = sign * (0.09 + fold * 0.16)
+            tapered_curve(root, "Woven cloak fold", "cloth_dark",
+                          ((x, -0.015, 1.42 - fold * 0.04),
+                           (x + sign * 0.055, -0.015, 0.78),
+                           (x + sign * 0.02, 0.04, 0.12 + (fold % 2) * 0.08)),
+                          (0.35, 1.0, 0.12), 0.025, 8)
+    for index in range(5):
+        x = -0.58 + index * 0.29
+        extruded_plate(root, "Jagged cloak tear", "cloth",
+                       ((x, 0.35), (x + 0.11, 0.28), (x + 0.06, 0.06),
+                        (x + 0.19, 0.24), (x + 0.26, 0.34)),
+                       -0.16, 0.05, 0.008)
+    hood = ellipsoid(root, "Hooded cowl", "cloth_dark", (0, 0.015, 1.59),
+                     (0.37, 0.33, 0.4), 20, 14)
+    hood_tip = tapered_curve(root, "Pointed hood peak", "cloth",
+                             ((0, 0.02, 1.77), (0, 0.08, 1.97), (0, 0.14, 2.12)),
+                             (1.0, 0.48, 0.02), 0.22, 12)
+    ellipsoid(root, "Face shadow", "shade", (0, -0.302, 1.59), (0.235, 0.045, 0.25), 14, 10)
     for sign in (-1, 1):
-        limb(root, "Hoodie sleeve", "cloth_dark", (sign * 0.28, -0.02, 0.86),
-             (sign * 0.6, -0.2, 1.05), 0.1, 0.8)
-        limb(root, "Leg", "deep", (sign * 0.15, 0, 0.45), (sign * 0.17, 0, 0.1), 0.1, 0.85)
-        ellipsoid(root, "Sneaker", "shade", (sign * 0.18, -0.06, 0.08), (0.13, 0.2, 0.09), 12, 8)
-        ellipsoid(root, "Sneaker sole", "bone", (sign * 0.18, -0.06, 0.03), (0.135, 0.205, 0.03), 12, 6)
-        hugging_hand(root, sign, (sign * 0.64, -0.22, 1.02))
-    # A short chain still hangs from the right forearm: the git chain, kept
-    # from the original summoner so the attack blade has something to belong to.
-    for i in range(8):
-        angle = i * math.tau / 8
-        link = torus(root, "Forearm wrapped chain", "metal",
-                     (0.5 + math.cos(angle) * 0.1, -0.14 + math.sin(angle) * 0.075,
-                      0.98 - i * 0.012),
-                     0.062, 0.016, (math.pi / 2, 0, angle), 8)
-        rest = tuple(link.rotation_euler)
-        animate_object(link, rotations=((1, rest), (49, (rest[0] + 0.06, rest[1], rest[2] + 0.08)),
-                                        (FRAME_END, rest)))
-    for i in range(7):
+        ellipsoid(root, "Eye ember", "glow", (sign * 0.105, -0.352, 1.66),
+                  (0.035, 0.022, 0.032), 8, 6, smooth=False)
+        shoulder = ellipsoid(root, "Layered mantle", "cloth_dark",
+                             (sign * 0.37, 0.03, 1.36), (0.31, 0.3, 0.16), 12, 8)
+        extruded_plate(root, "Mantle shoulder plate", "cloth",
+                       ((sign * 0.18, 1.49), (sign * 0.54, 1.51),
+                        (sign * 0.72, 1.31), (sign * 0.43, 1.24)),
+                       -0.25, 0.09, 0.025)
+        limb(root, "Mantle point", "cloth", (sign * 0.43, -0.1, 1.4),
+             (sign * 0.64, -0.12, 1.18), 0.14, 0.12)
+        limb(root, "Forearm sleeve", "cloth", (sign * 0.37, -0.02, 1.2),
+             (sign * 0.54, -0.3, 0.82), 0.12, 0.62)
+        ellipsoid(root, "Leather glove", "metal", (sign * 0.54, -0.33, 0.78),
+                  (0.12, 0.15, 0.11), 10, 8)
+        for pouch in range(2):
+            x = sign * (0.28 + pouch * 0.16)
+            bevelled_box(root, "Belt pouch", "cloth_dark",
+                         (x, -0.31, 0.92), (0.16, 0.12, 0.21), 0.035)
+    torus(root, "Crossed belt", "metal", (0, -0.14, 1.03), 0.36, 0.035,
+          (math.pi / 2, 0, 0), 24)
+    for i in range(12):
         angle = i * 0.42
         link = torus(root, "Chain weapon link", "metal",
-                     (0.56 + 0.06 * math.sin(angle), -0.16, 0.86 - i * 0.065),
-                     0.06, 0.016, (math.pi / 2, 0, (i % 2) * math.pi / 2), 8)
+                     (0.62 + 0.12 * math.sin(angle), -0.46, 0.84 - i * 0.065),
+                     0.074, 0.018, (math.pi / 2, 0, (i % 2) * math.pi / 2), 8)
         rest = tuple(link.rotation_euler)
         animate_object(link, rotations=((1, rest), (49, (rest[0] + 0.08, rest[1], rest[2] + 0.1)),
                                         (FRAME_END, rest)))
-    ellipsoid(root, "Chain weight", "metal", (0.57, -0.16, 0.36), (0.09, 0.09, 0.11), 10, 8)
-    animate_idle(root, 0.03)
-    animate_object(head, rotations=((1, (0, 0, 0)), (49, (0.04, 0.06, 0)), (FRAME_END, (0, 0, 0))))
+    for i in range(8):
+        angle = i * math.tau / 8
+        link = torus(root, "Forearm wrapped chain", "metal",
+                     (0.53 + math.cos(angle) * 0.105, -0.3 + math.sin(angle) * 0.075,
+                      1.17 - i * 0.037),
+                     0.066, 0.018, (math.pi / 2, 0, angle), 8)
+        rest = tuple(link.rotation_euler)
+        animate_object(link, rotations=((1, rest), (49, (rest[0] + 0.06, rest[1], rest[2] + 0.08)),
+                                        (FRAME_END, rest)))
+    ellipsoid(root, "Chain weight", "metal", (0.63, -0.46, 0.06),
+              (0.12, 0.12, 0.15), 10, 8)
+    animate_idle(root, 0.025)
+    animate_object(hood_tip, rotations=((1, (0, 0, 0)), (49, (0.08, 0, 0)),
+                                        (FRAME_END, (0, 0, 0))))
     return root
 
 

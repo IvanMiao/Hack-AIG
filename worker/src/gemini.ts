@@ -1,6 +1,9 @@
 import type { Env } from "./env";
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
+const LYRIA_MODEL = "lyria-3-clip-preview";
+
+export interface MediaBlob { mimeType: string; bytes: Uint8Array }
 
 /**
  * Gemini takes JSON Schema in `generationConfig.responseFormat.text.schema`, but draft-07 tuple `items`
@@ -27,35 +30,60 @@ export interface StructuredRequest {
   temperature?: number;
 }
 
-export async function generateStructured<T>(env: Env, request: StructuredRequest): Promise<T> {
-  const response = await fetch(`${BASE}/models/${env.GEMINI_TEXT_MODEL}:generateContent`, {
+async function generateContent(env: Env, model: string, body: unknown, label: string): Promise<unknown> {
+  const response = await fetch(`${BASE}/models/${model}:generateContent`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: request.system }] },
-      contents: [{ role: "user", parts: [{ text: request.user }] }],
-      generationConfig: {
-        temperature: request.temperature ?? 0.9,
-        responseFormat: { text: { mimeType: "APPLICATION_JSON", schema: toGeminiSchema(request.schema) } },
-      },
-    }),
+    body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`gemini ${response.status}: ${(await response.text()).slice(0, 300)}`);
-  const data = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+  if (!response.ok) throw new Error(`${label} ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  return response.json();
+}
+
+interface InlinePart { text?: string; inlineData?: { mimeType: string; data: string } }
+const partsOf = (data: unknown): InlinePart[] =>
+  (data as { candidates?: Array<{ content?: { parts?: InlinePart[] } }> }).candidates?.[0]?.content?.parts ?? [];
+
+/** atob + charCodeAt loop: several times faster than Uint8Array.from with a callback on multi-megabyte payloads. */
+function decodeBase64(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function firstInline(data: unknown, label: string): MediaBlob {
+  const part = partsOf(data).find((p) => p.inlineData)?.inlineData;
+  if (!part) throw new Error(`${label} returned no media`);
+  return { mimeType: part.mimeType, bytes: decodeBase64(part.data) };
+}
+
+export async function generateStructured<T>(env: Env, request: StructuredRequest): Promise<T> {
+  const data = await generateContent(env, env.GEMINI_TEXT_MODEL, {
+    systemInstruction: { parts: [{ text: request.system }] },
+    contents: [{ role: "user", parts: [{ text: request.user }] }],
+    generationConfig: {
+      temperature: request.temperature ?? 0.9,
+      responseFormat: { text: { mimeType: "APPLICATION_JSON", schema: toGeminiSchema(request.schema) } },
+    },
+  }, "gemini");
+  const text = partsOf(data).map((p) => p.text ?? "").join("");
   if (!text) throw new Error("gemini returned no text");
   return JSON.parse(text) as T;
 }
 
-export async function generateImage(env: Env, prompt: string): Promise<{ mimeType: string; bytes: Uint8Array }> {
-  const response = await fetch(`${BASE}/models/${env.GEMINI_IMAGE_MODEL}:generateContent`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ["IMAGE"] } }),
-  });
-  if (!response.ok) throw new Error(`nano banana ${response.status}: ${(await response.text()).slice(0, 300)}`);
-  const data = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { mimeType: string; data: string } }> } }> };
-  const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData;
-  if (!part) throw new Error("nano banana returned no image");
-  return { mimeType: part.mimeType, bytes: Uint8Array.from(atob(part.data), (c) => c.charCodeAt(0)) };
+export type AspectRatio = "1:1" | "16:9" | "3:4" | "4:3" | "9:16";
+
+export async function generateImage(env: Env, prompt: string, aspectRatio: AspectRatio = "1:1"): Promise<MediaBlob> {
+  const data = await generateContent(env, env.GEMINI_IMAGE_MODEL, {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio } },
+  }, "nano banana");
+  return firstInline(data, "nano banana");
+}
+
+/** Lyria clips are a fixed ~30s MP3 — exactly one loop of boss music per phase. */
+export async function generateMusicClip(env: Env, prompt: string): Promise<MediaBlob> {
+  const data = await generateContent(env, LYRIA_MODEL, { contents: [{ parts: [{ text: prompt }] }] }, "lyria");
+  return firstInline(data, "lyria");
 }

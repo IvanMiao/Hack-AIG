@@ -20,7 +20,20 @@
         </div>
         <p id="incantation-status" class="status"></p>
       </section>
+      <section id="ritual" class="panel hidden">
+        <p id="ritual-incantation" class="ritual-incantation"></p>
+        <div class="cards">
+          <article class="card" data-card="form"><header><h3>FORM</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+          <article class="card" data-card="temper"><header><h3>TEMPER</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+          <article class="card" data-card="voice"><header><h3>VOICE</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+          <article class="card" data-card="arena"><header><h3>ARENA</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+        </div>
+        <div class="ritual-progress"><div id="ritual-progress-fill"></div></div>
+        <p id="ritual-status" class="status"></p>
+        <button id="enter-btn" class="primary" disabled>ENTER THE RIFT</button>
+      </section>
       <section id="fight" class="panel hidden">
+        <img id="portrait" class="portrait" alt="" />
         <div id="boss-bar"><span id="boss-name"></span><div class="bar"><div id="boss-hp"></div></div></div>
         <div id="player-bar"><div class="bar"><div id="player-hp"></div></div><div class="bar stamina"><div id="player-stamina"></div></div></div>
         <p id="subtitle" class="subtitle"></p>

@@ -9,6 +9,8 @@ export interface Stage {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   applySpec(spec: NemesisSpec): void;
+  /** Swap the void for a generated equirectangular sky; null restores the flat void. */
+  setSky(url: string | null): void;
   /** Mirror sim state into the scene, react to this frame's events, and render. */
   render(dt: number, state: BattleState, events: readonly BattleEvent[]): void;
   dispose(): void;
@@ -63,6 +65,22 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   let accent = new THREE.Color(0x7fdcff);
 
   const hazards = createHazardView(scene);
+
+  const voidColor = new THREE.Color(0x05060a);
+  const textureLoader = new THREE.TextureLoader().setCrossOrigin("anonymous");
+  let skyTexture: THREE.Texture | null = null;
+  const setSky = (url: string | null) => {
+    skyTexture?.dispose();
+    skyTexture = null;
+    if (!url) { scene.background = voidColor; return; }
+    textureLoader.load(url, (texture) => {
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      skyTexture = texture;
+      scene.background = texture;
+      scene.backgroundIntensity = 0.8;
+    });
+  };
 
   const applySpec = (spec: NemesisSpec) => {
     boss.clear();
@@ -144,7 +162,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   };
 
   return {
-    renderer, scene, camera, applySpec, render,
+    renderer, scene, camera, applySpec, setSky, render,
     dispose: () => { window.removeEventListener("resize", resize); renderer.dispose(); },
   };
 }

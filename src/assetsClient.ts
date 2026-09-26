@@ -1,0 +1,40 @@
+import { FORGE_URL } from "./forgeClient";
+
+export const ASSET_KINDS = ["sky", "portrait", "music", "voice"] as const;
+export type AssetKind = (typeof ASSET_KINDS)[number];
+
+/** `files` maps stable names (`sky`, `portrait`, `p1`/`p2`, `intro`/`phase`/`taunt0`…) to absolute URLs. */
+export interface AssetBundle { kind: AssetKind; files: Record<string, string> }
+
+const ASSET_TIMEOUT_MS = 90_000;
+
+export async function requestAsset(code: string, kind: AssetKind): Promise<AssetBundle> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ASSET_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${FORGE_URL}/forge/asset`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, kind }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`asset ${kind} ${response.status}`);
+    const manifest = (await response.json()) as { kind: AssetKind; files: Record<string, string> };
+    const files = Object.fromEntries(Object.entries(manifest.files).map(([name, path]) => [name, `${FORGE_URL}${path}`]));
+    return { kind, files };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface AssetListener {
+  onReady(bundle: AssetBundle): void;
+  onFail(kind: AssetKind, error: unknown): void;
+}
+
+/** Fire all four generations in parallel; each settles independently so the ritual can reveal them as they land. */
+export function requestAllAssets(code: string, listener: AssetListener): Promise<void> {
+  return Promise.all(ASSET_KINDS.map((kind) =>
+    requestAsset(code, kind).then(listener.onReady, (error: unknown) => listener.onFail(kind, error)),
+  )).then(() => undefined);
+}

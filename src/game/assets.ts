@@ -75,11 +75,12 @@ export function instantiate(
     bone: new THREE.Color("#d9d2c3"),
     stone: new THREE.Color("#2a2c38"),
     stone_dark: new THREE.Color("#14161f"),
-    cloth: new THREE.Color("#1c1c26"),
-    cloth_dark: new THREE.Color("#0b0b10"),
-    metal: new THREE.Color("#5a5f6e"),
+    cloth: new THREE.Color(options.player ? "#4a4c60" : "#1c1c26"),
+    cloth_dark: new THREE.Color(options.player ? "#2a2b3a" : "#0b0b10"),
+    metal: new THREE.Color(options.player ? "#8d93a6" : "#5a5f6e"),
     glow: accent.clone(),
   };
+  const playerEmissive = new THREE.Color("#141626");
   const shared = new Map<string, THREE.Material>();
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x030308, side: THREE.BackSide });
   clone.traverse((object) => {
@@ -123,7 +124,7 @@ export function instantiate(
           });
         }
       } else {
-        mapped = createToonMaterial(colors[role], 0x000000, { map, normalMap });
+        mapped = createToonMaterial(colors[role], options.player ? playerEmissive : 0x000000, { map, normalMap });
       }
       shared.set(materialKey, mapped);
     }

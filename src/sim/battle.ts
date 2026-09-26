@@ -60,6 +60,20 @@ const currentPhase = (spec: NemesisSpec, boss: BossState): Phase => {
 
 const isMelee = (type: MoveType) => type === "sweep" || type === "thrust" || type === "nova";
 
+/** Active/recover windows for a move type; ranged moves have no active window. */
+export function moveTiming(type: MoveType): { activeMs: number; recoverMs: number } {
+  switch (type) {
+    case "sweep": return MOVE.sweep;
+    case "thrust": return MOVE.thrust;
+    case "charge": return MOVE.charge;
+    case "nova": return MOVE.nova;
+    case "ring": return { activeMs: 0, recoverMs: MOVE.ring.recoverMs };
+    case "volley": return { activeMs: 0, recoverMs: MOVE.volley.recoverMs };
+    case "zone": return { activeMs: 0, recoverMs: MOVE.zone.recoverMs };
+    case "blink": return MOVE.blink;
+  }
+}
+
 export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const state = createInitialState(spec, seed);
   const rng: Rng = createRng(seed);
@@ -263,19 +277,6 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         if (spec.weakness.trigger === "after_blink") openWeakness(events);
         break;
       }
-    }
-  };
-
-  const moveTiming = (type: MoveType): { activeMs: number; recoverMs: number } => {
-    switch (type) {
-      case "sweep": return MOVE.sweep;
-      case "thrust": return MOVE.thrust;
-      case "charge": return MOVE.charge;
-      case "nova": return MOVE.nova;
-      case "ring": return { activeMs: 0, recoverMs: MOVE.ring.recoverMs };
-      case "volley": return { activeMs: 0, recoverMs: MOVE.volley.recoverMs };
-      case "zone": return { activeMs: 0, recoverMs: MOVE.zone.recoverMs };
-      case "blink": return MOVE.blink;
     }
   };
 

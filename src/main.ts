@@ -441,6 +441,7 @@ const loop = (now: number) => {
     else {
       accumulator += dt * 1000;
       const inputNow = combat.read();
+      inputNow.move = stage.cameraRelative(inputNow.move);
       while (accumulator >= TICK_MS) {
         accumulator -= TICK_MS;
         events.push(...battle.step(inputNow));

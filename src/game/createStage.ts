@@ -3,7 +3,7 @@ import { addOutline, createToonMaterial } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
 import type { NemesisSpec } from "../spec";
-import { ARENA_RADIUS, type BattleEvent, type BattleState } from "../sim";
+import { ARENA_RADIUS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
 
 export interface Stage {
@@ -14,6 +14,8 @@ export interface Stage {
   applySpec(spec: NemesisSpec): void;
   setSky(url: string | null): void;
   setMode(mode: "attract" | "fight"): void;
+  /** Map a screen-relative stick (x = right, z = forward) into world space using the current camera yaw. */
+  cameraRelative(move: Vec2): Vec2;
   render(dt: number, state: BattleState, events: readonly BattleEvent[]): void;
   dispose(): void;
 }
@@ -30,6 +32,158 @@ const BOSS_HEIGHTS: Record<NemesisSpec["identity"]["silhouette"], number> = {
 interface ToonMaterialState {
   material: THREE.MeshToonMaterial;
   emissive: THREE.Color;
+}
+
+const clamp01 = (value: number) => THREE.MathUtils.clamp(value, 0, 1);
+const easeOut = (t: number) => 1 - Math.pow(1 - clamp01(t), 3);
+const easeIn = (t: number) => Math.pow(clamp01(t), 3);
+const easeInOut = (t: number) => THREE.MathUtils.smoothstep(t, 0, 1);
+/** 0 until `hold`, then eases to 1 by t = 1. Used so a pose is held for a beat before returning to rest. */
+const holdThenEase = (t: number, hold: number) => easeInOut((clamp01(t) - hold) / (1 - hold));
+
+interface PlayerPose {
+  lean: number;
+  twist: number;
+  lunge: number;
+  crouch: number;
+  bladeX: number;
+  bladeZ: number;
+  slash: number;
+  charge: number;
+}
+
+const REST_POSE: PlayerPose = { lean: 0, twist: 0, lunge: 0, crouch: 0, bladeX: 0, bladeZ: -0.3, slash: 0, charge: 0 };
+const LIGHT_WINDUP: PlayerPose = { lean: -0.05, twist: -0.5, lunge: -0.08, crouch: 0.04, bladeX: -0.7, bladeZ: -1.8, slash: 0, charge: 0 };
+const LIGHT_STRIKE: PlayerPose = { lean: 0.18, twist: 0.55, lunge: 0.42, crouch: 0.06, bladeX: 0.9, bladeZ: 1.7, slash: 1, charge: 0 };
+const HEAVY_WINDUP: PlayerPose = { lean: -0.2, twist: -0.3, lunge: -0.15, crouch: 0.16, bladeX: -2.5, bladeZ: -0.9, slash: 0, charge: 1 };
+const HEAVY_STRIKE: PlayerPose = { lean: 0.42, twist: 0.15, lunge: 0.6, crouch: 0.1, bladeX: 1.15, bladeZ: 0.25, slash: 1, charge: 0 };
+
+const lerpPose = (out: PlayerPose, a: PlayerPose, b: PlayerPose, t: number): PlayerPose => {
+  out.lean = THREE.MathUtils.lerp(a.lean, b.lean, t);
+  out.twist = THREE.MathUtils.lerp(a.twist, b.twist, t);
+  out.lunge = THREE.MathUtils.lerp(a.lunge, b.lunge, t);
+  out.crouch = THREE.MathUtils.lerp(a.crouch, b.crouch, t);
+  out.bladeX = THREE.MathUtils.lerp(a.bladeX, b.bladeX, t);
+  out.bladeZ = THREE.MathUtils.lerp(a.bladeZ, b.bladeZ, t);
+  out.slash = THREE.MathUtils.lerp(a.slash, b.slash, t);
+  out.charge = THREE.MathUtils.lerp(a.charge, b.charge, t);
+  return out;
+};
+
+/** Anticipate → snap → hold → settle. The strike snaps in the first half of the active window so the hit reads instantly. */
+function attackPose(out: PlayerPose, actionT: number, attack: typeof PLAYER.light | typeof PLAYER.heavy, windup: PlayerPose, strike: PlayerPose): PlayerPose {
+  if (actionT < attack.windupMs) return lerpPose(out, REST_POSE, windup, easeOut(actionT / attack.windupMs));
+  const activeT = actionT - attack.windupMs;
+  if (activeT < attack.activeMs) return lerpPose(out, windup, strike, easeOut((activeT / attack.activeMs) * 2));
+  const recoverT = (activeT - attack.activeMs) / attack.recoverMs;
+  lerpPose(out, strike, REST_POSE, holdThenEase(recoverT, 0.3));
+  out.slash = 1 - THREE.MathUtils.smoothstep(recoverT, 0, 0.45);
+  return out;
+}
+
+interface BossPose {
+  lean: number;
+  lunge: number;
+  rise: number;
+  stretch: number;
+  squash: number;
+  glow: number;
+}
+
+const BOSS_REST: BossPose = { lean: 0, lunge: 0, rise: 0, stretch: 1, squash: 1, glow: 0 };
+const BOSS_COIL: BossPose = { lean: -0.38, lunge: -0.35, rise: 0.4, stretch: 1.08, squash: 1.12, glow: 1 };
+const BOSS_MELEE_STRIKE: BossPose = { lean: 0.5, lunge: 1.1, rise: -0.1, stretch: 1.1, squash: 0.9, glow: 0 };
+const BOSS_RANGED_STRIKE: BossPose = { lean: 0.22, lunge: 0.25, rise: 0.55, stretch: 1.14, squash: 0.96, glow: 0 };
+const BOSS_STAGGER: BossPose = { lean: 0.42, lunge: -0.2, rise: -0.25, stretch: 1.04, squash: 0.9, glow: 0 };
+
+const lerpBossPose = (out: BossPose, a: BossPose, b: BossPose, t: number): BossPose => {
+  out.lean = THREE.MathUtils.lerp(a.lean, b.lean, t);
+  out.lunge = THREE.MathUtils.lerp(a.lunge, b.lunge, t);
+  out.rise = THREE.MathUtils.lerp(a.rise, b.rise, t);
+  out.stretch = THREE.MathUtils.lerp(a.stretch, b.stretch, t);
+  out.squash = THREE.MathUtils.lerp(a.squash, b.squash, t);
+  out.glow = THREE.MathUtils.lerp(a.glow, b.glow, t);
+  return out;
+};
+
+function bossPose(out: BossPose, boss: BattleState["boss"], timeMs: number): BossPose {
+  if (boss.staggerT > 0) {
+    lerpBossPose(out, BOSS_REST, BOSS_STAGGER, 1);
+    out.lean += Math.sin(timeMs / 70) * 0.05;
+    return out;
+  }
+  const current = boss.current;
+  if (!current) return lerpBossPose(out, BOSS_REST, BOSS_REST, 0);
+  const melee = current.move.type === "sweep" || current.move.type === "thrust" || current.move.type === "nova" || current.move.type === "charge";
+  const strike = melee ? BOSS_MELEE_STRIKE : BOSS_RANGED_STRIKE;
+  const timing = moveTiming(current.move.type);
+  if (current.phase === "telegraph") {
+    const u = current.t / current.telegraphMs;
+    lerpBossPose(out, BOSS_REST, BOSS_COIL, easeIn(u) * 0.7 + easeOut(u) * 0.3);
+    const tremble = THREE.MathUtils.smoothstep(u, 0.7, 1) * Math.sin(timeMs / 22) * 0.035;
+    out.lean += tremble;
+    out.glow = u * u;
+    return out;
+  }
+  if (current.phase === "active") {
+    const u = timing.activeMs > 0 ? current.t / timing.activeMs : 1;
+    lerpBossPose(out, BOSS_COIL, strike, easeOut(u * 2.2));
+    out.glow = 1 - u;
+    return out;
+  }
+  const u = current.t / timing.recoverMs;
+  lerpBossPose(out, strike, BOSS_REST, holdThenEase(u, 0.35));
+  return out;
+}
+
+function makeSlashArc(): THREE.Mesh {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 16;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const gradient = context.createLinearGradient(0, 0, 128, 0);
+    gradient.addColorStop(0, "rgba(255,255,255,0)");
+    gradient.addColorStop(0.35, "rgba(255,255,255,1)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 128, 16);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  const arc = new THREE.Mesh(
+    new THREE.RingGeometry(0.85, 1.55, 28, 1, -1.25, 2.5),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      alphaMap: texture,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    }),
+  );
+  arc.visible = false;
+  return arc;
+}
+
+function makeImpactRing(): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.72, 1, 40),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.06;
+  ring.visible = false;
+  return ring;
 }
 
 function disposeAssetLibrary(library: AssetLibrary): void {
@@ -210,14 +364,19 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   });
   scene.add(new THREE.Points(emberGeometry, emberMaterial));
 
-  const hemisphere = new THREE.HemisphereLight(0xaab8df, 0x251e32, 2.4);
+  const hemisphere = new THREE.HemisphereLight(0xaab8df, 0x3a3150, 2.6);
   const key = new THREE.DirectionalLight(0xf1e8db, 4.5);
   key.position.set(2, 11, 8);
   key.target.position.set(0, 1, 0);
   const rim = new THREE.DirectionalLight(accent, 3.2);
   rim.position.set(0, 8, -13);
   rim.target.position.set(0, 1, -1);
-  scene.add(hemisphere, key, key.target, rim, rim.target);
+  // Camera-following fill so the hero is lit from the viewer's side no matter where the fight circles.
+  const fill = new THREE.DirectionalLight(0xe4e9ff, 2.4);
+  fill.target.position.set(0, 1, 0);
+  const heroLamp = new THREE.PointLight(0xfff1dc, 18, 7, 2);
+  heroLamp.position.set(0.6, 3.2, -0.4);
+  scene.add(hemisphere, key, key.target, rim, rim.target, fill, fill.target);
 
   const arenaRoot = new THREE.Group();
   arenaRoot.name = "Arena";
@@ -246,12 +405,12 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const player = new THREE.Group();
   const playerVisualPivot = new THREE.Group();
   player.add(playerVisualPivot);
-  const fallbackCloak = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.9, 7), createToonMaterial(0x1c1c26));
+  const fallbackCloak = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.9, 7), createToonMaterial(0x4a4c60, 0x141626));
   fallbackCloak.name = "Fallback cloak";
   fallbackCloak.userData.materialRole = "cloth";
   fallbackCloak.position.y = 0.95;
   addOutline(fallbackCloak);
-  const fallbackHood = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), createToonMaterial(0x0b0b10));
+  const fallbackHood = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), createToonMaterial(0x2a2b3a, 0x141626));
   fallbackHood.name = "Fallback hood";
   fallbackHood.userData.materialRole = "cloth_dark";
   fallbackHood.position.y = 1.95;
@@ -266,8 +425,13 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const fallbackChain = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.025, 5, 8), createToonMaterial(0x5a5f6e));
   fallbackChain.position.set(0.56, 0.55, 0.12);
   playerVisualPivot.add(fallbackCloak, fallbackHood, fallbackFace, fallbackEyes, fallbackChain);
+  player.add(heroLamp);
+  const slashArc = makeSlashArc();
+  const impactRing = makeImpactRing();
+  player.add(slashArc, impactRing);
   scene.add(player);
   let bladePivot: THREE.Group | null = null;
+  let bladeMaterial: THREE.MeshToonMaterial | null = null;
 
   const boss = new THREE.Group();
   const bossVisualPivot = new THREE.Group();
@@ -298,6 +462,17 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   const toBoss = new THREE.Vector3();
   const desired = new THREE.Vector3();
   const lastPlayerPosition = new THREE.Vector3();
+  const pose: PlayerPose = { ...REST_POSE };
+  const bossPoseNow: BossPose = { ...BOSS_REST };
+  const rollAxis = new THREE.Vector3();
+  const rollQuaternion = new THREE.Quaternion();
+  const poseQuaternion = new THREE.Quaternion();
+  const poseEuler = new THREE.Euler();
+  const rollCentre = new THREE.Vector3();
+  const cameraForward = new THREE.Vector3();
+  const lookTarget = new THREE.Vector3();
+  let lastActionT = 0;
+  let impactT = 1;
   let runeGroup: THREE.Group | null = null;
   let sigilMaterial: THREE.MeshBasicMaterial | null = null;
 
@@ -305,9 +480,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     const pivot = new THREE.Group();
     pivot.name = "Bone blade attack";
     pivot.position.set(0.47, 0.9, 0.12);
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.12, 0.08), createToonMaterial("#d9d2c3"));
+    bladeMaterial = createToonMaterial("#d9d2c3");
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.12, 0.08), bladeMaterial);
     blade.position.y = 0.48;
-    blade.rotation.z = -0.3;
     addOutline(blade, 0.012);
     pivot.add(blade);
     return pivot;
@@ -343,7 +518,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     if (!library) return;
     playerMixer?.stopAllAction();
     disposeGroup(playerVisualPivot);
-    const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#1c1c26"], { player: true, outline: 0.016 });
+    const visual = instantiate(library.player, ["#0b0b10", "#e9e4d8", "#3c3e50"], { player: true, outline: 0.016 });
     playerVisualPivot.add(visual);
     bladePivot = createBlade();
     playerVisualPivot.add(bladePivot);
@@ -481,22 +656,65 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
 
     playerSpeed = step > 0 ? Math.hypot(player.position.x - lastPlayerPosition.x, player.position.z - lastPlayerPosition.z) / step : 0;
     lastPlayerPosition.copy(player.position);
-    const rollTilt = p.action === "roll" ? Math.sin((p.actionT / 400) * Math.PI) * 0.8 : 0;
-    const moveLean = playerSpeed > 0.1 ? 0.08 : 0;
-    playerVisualPivot.rotation.x = rollTilt + moveLean;
-    if (bladePivot) {
-      const attackT = p.action === "heavy"
-        ? THREE.MathUtils.clamp(p.actionT / 1060, 0, 1)
-        : p.action === "light" ? THREE.MathUtils.clamp(p.actionT / 480, 0, 1) : 0;
-      bladePivot.rotation.z = attackT > 0 ? -0.8 + Math.sin(attackT * Math.PI) * 2.6 : -0.3;
+
+    if (p.action === "light") attackPose(pose, p.actionT, PLAYER.light, LIGHT_WINDUP, LIGHT_STRIKE);
+    else if (p.action === "heavy") attackPose(pose, p.actionT, PLAYER.heavy, HEAVY_WINDUP, HEAVY_STRIKE);
+    else lerpPose(pose, REST_POSE, REST_POSE, 0);
+    const heavyCommit = p.action === "heavy" && lastActionT < PLAYER.heavy.windupMs && p.actionT >= PLAYER.heavy.windupMs;
+    if (heavyCommit) impactT = 0;
+    lastActionT = p.action === "idle" ? 0 : p.actionT;
+
+    const moveLean = p.action === "idle" && playerSpeed > 0.1 ? 0.1 : 0;
+    poseEuler.set(pose.lean + moveLean, pose.twist, 0);
+    poseQuaternion.setFromEuler(poseEuler);
+    playerVisualPivot.position.set(0, -pose.crouch, pose.lunge);
+    if (p.action === "roll") {
+      // Tumble around the axis perpendicular to the roll direction, keeping the body centre low through the middle.
+      const u = clamp01(p.actionT / PLAYER.roll.durationMs);
+      const localX = p.rollDir.x * p.facing.z - p.rollDir.z * p.facing.x;
+      const localZ = p.rollDir.x * p.facing.x + p.rollDir.z * p.facing.z;
+      rollAxis.set(localZ, 0, -localX);
+      if (rollAxis.lengthSq() < 1e-6) rollAxis.set(1, 0, 0);
+      rollAxis.normalize();
+      rollQuaternion.setFromAxisAngle(rollAxis, easeInOut(u) * Math.PI * 2);
+      poseQuaternion.multiply(rollQuaternion);
+      const centreHeight = 0.9 - Math.sin(u * Math.PI) * 0.3;
+      rollCentre.set(0, 0.9, 0).applyQuaternion(poseQuaternion);
+      playerVisualPivot.position.set(-rollCentre.x, centreHeight - rollCentre.y, -rollCentre.z);
+    }
+    playerVisualPivot.quaternion.copy(poseQuaternion);
+    if (bladePivot) bladePivot.rotation.set(pose.bladeX, 0, pose.bladeZ);
+    if (bladeMaterial) bladeMaterial.emissive.copy(accent).multiplyScalar(pose.charge * 0.9);
+
+    const heavy = p.action === "heavy";
+    slashArc.visible = pose.slash > 0.01;
+    if (slashArc.visible && slashArc.material instanceof THREE.MeshBasicMaterial) {
+      slashArc.material.opacity = pose.slash * 0.95;
+      slashArc.material.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.55);
+      const reach = heavy ? 1.35 : 1;
+      slashArc.scale.setScalar(reach * (0.8 + pose.slash * 0.2));
+      slashArc.position.set(heavy ? 0.15 : 0.2, heavy ? 1.15 : 1.05, heavy ? 1.2 : 1.0);
+      // Light: a horizontal cut sweeping across; heavy: a vertical cleave down the centre line.
+      if (heavy) slashArc.rotation.set(0, -Math.PI / 2 + 0.2, Math.PI / 2 + 0.9);
+      else slashArc.rotation.set(-Math.PI / 2 + 0.45, 0, -0.75);
+    }
+    impactT = Math.min(1, impactT + step / 0.32);
+    impactRing.visible = impactT < 1;
+    if (impactRing.visible && impactRing.material instanceof THREE.MeshBasicMaterial) {
+      impactRing.material.opacity = (1 - impactT) * 0.9;
+      impactRing.material.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.4);
+      impactRing.scale.setScalar(0.6 + easeOut(impactT) * 2.4);
+      impactRing.position.z = 1.4;
     }
 
-    const telegraphT = b.current?.phase === "telegraph" ? b.current.t / b.current.telegraphMs : 0;
-    bossVisualPivot.scale.setScalar(b.staggerT > 0 ? 0.92 : (1 + telegraphT * 0.12) * (0.08 + bossSpawn * 0.92));
-    bossVisualPivot.rotation.x = b.staggerT > 0 ? 0.35 : -telegraphT * 0.25;
+    bossPose(bossPoseNow, b, state.timeMs);
     if (bossSpawn < 1) bossSpawn = Math.min(1, bossSpawn + step / 0.82);
     const reveal = 1 - Math.pow(1 - bossSpawn, 3);
-    bossVisualPivot.position.y = -2.1 * (1 - reveal) + (b.invulnerableT > 0 ? Math.sin(state.timeMs / 90) * 0.15 + 0.4 : 0);
+    const spawnScale = 0.08 + bossSpawn * 0.92;
+    bossVisualPivot.scale.set(bossPoseNow.stretch * spawnScale, bossPoseNow.squash * spawnScale, bossPoseNow.stretch * spawnScale);
+    bossVisualPivot.rotation.x = bossPoseNow.lean;
+    bossVisualPivot.position.z = bossPoseNow.lunge;
+    bossVisualPivot.position.y = -2.1 * (1 - reveal) + bossPoseNow.rise + (b.invulnerableT > 0 ? Math.sin(state.timeMs / 90) * 0.15 + 0.4 : 0);
 
     for (const entry of playerMaterials) {
       entry.material.emissive.copy(entry.emissive);
@@ -504,6 +722,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     }
     for (const entry of bossMaterials) {
       entry.material.emissive.copy(entry.emissive);
+      if (bossPoseNow.glow > 0) entry.material.emissive.lerp(accent, bossPoseNow.glow * 0.55);
       if (b.hitFlash > 0) entry.material.emissive.lerp(new THREE.Color(0xffffff), Math.min(1, b.hitFlash / 120));
       if (b.weaknessT > 0) {
         entry.material.emissive.lerp(new THREE.Color(0xffd166), 0.4 + 0.3 * Math.sin(state.timeMs / 60));
@@ -516,7 +735,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     toBoss.divideScalar(distance);
     const right = new THREE.Vector3(-toBoss.z, 0, toBoss.x);
     if (mode === "fight") {
-      desired.copy(player.position).addScaledVector(toBoss, -5.6).addScaledVector(right, 1.9).setY(3.3);
+      desired.copy(player.position).addScaledVector(toBoss, -6.6).addScaledVector(right, 2.1).setY(3.9);
       const focusHeight = currentSpec
         ? THREE.MathUtils.clamp(BOSS_HEIGHTS[currentSpec.identity.silhouette] * (2 / 3), 1.35, 2.8)
         : 2;
@@ -526,7 +745,10 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
       } else {
         camera.position.lerp(desired, 1 - Math.exp(-step * 8));
       }
-      camera.lookAt(boss.position.x, boss.position.y + focusHeight, boss.position.z);
+      // Frame both fighters: aim between the hero's chest and the boss's focus point so the hero stays in shot.
+      lookTarget.set(player.position.x, 1.3, player.position.z)
+        .lerp(new THREE.Vector3(boss.position.x, boss.position.y + focusHeight, boss.position.z), 0.62);
+      camera.lookAt(lookTarget);
     } else {
       if (!reducedMotion.matches) attractAngle += step * 0.075;
       desired.set(Math.sin(attractAngle) * 15, 7.4, Math.cos(attractAngle) * 15);
@@ -542,6 +764,8 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     shakeOffset.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, 0).multiplyScalar(0.6);
     camera.position.add(shakeOffset);
     skyDome.position.copy(camera.position);
+    fill.position.copy(camera.position).add(new THREE.Vector3(0, 4, 0)).addScaledVector(right, -2.5);
+    fill.target.position.copy(player.position).setY(1);
 
     playerMixer?.update(step * (reducedMotion.matches ? 0 : 1));
     bossMixer?.update(step * (reducedMotion.matches ? 0 : 1));
@@ -577,6 +801,15 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     applySpec,
     setSky,
     setMode: (nextMode) => { mode = nextMode; },
+    cameraRelative: (move) => {
+      camera.getWorldDirection(cameraForward).setY(0);
+      if (cameraForward.lengthSq() < 1e-6) return move;
+      cameraForward.normalize();
+      return {
+        x: cameraForward.x * move.z - cameraForward.z * move.x,
+        z: cameraForward.z * move.z + cameraForward.x * move.x,
+      };
+    },
     render,
     dispose: () => {
       disposed = true;

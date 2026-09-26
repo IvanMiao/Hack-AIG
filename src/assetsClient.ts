@@ -32,9 +32,9 @@ export interface AssetListener {
   onFail(kind: AssetKind, error: unknown): void;
 }
 
-/** Fire all four generations in parallel; each settles independently so the ritual can reveal them as they land. */
-export function requestAllAssets(code: string, listener: AssetListener): Promise<void> {
-  return Promise.all(ASSET_KINDS.map((kind) =>
+/** Fire the generations in parallel; each settles independently so the ritual can reveal them as they land. */
+export function requestAllAssets(code: string, listener: AssetListener, kinds: readonly AssetKind[] = ASSET_KINDS): Promise<void> {
+  return Promise.all(kinds.map((kind) =>
     requestAsset(code, kind).then(listener.onReady, (error: unknown) => listener.onFail(kind, error)),
   )).then(() => undefined);
 }

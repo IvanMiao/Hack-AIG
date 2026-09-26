@@ -4,7 +4,8 @@ import { ARENA_RADIUS, BOSS, BOSS_EDGE_MARGIN, MOVE, PLAYER, PLAYER_EDGE_MARGIN,
 const BOSS_LIMIT = ARENA_RADIUS - BOSS.radius - BOSS_EDGE_MARGIN;
 import { advanceHazard, overlaps } from "./hazard";
 import { createRng, type Rng } from "./rng";
-import type { BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
+import type { AttackSpec } from "./constants";
+import type { BattleEvent, BattleState, BossMove, BossState, DeathLog, Hazard, HazardShape, PlayerCommand, PlayerInput, PlayerState, Projectile, Vec2 } from "./types";
 import { add, clampToDisc, dist, dot, len, norm, perp, rotate, scale, sub, vec } from "./vec";
 
 /** Lab-only switches. All default off; the shipped game never touches them. */
@@ -50,10 +51,13 @@ export function createInitialState(spec: NemesisSpec, seed: number): BattleState
     player: {
       pos: vec(0, 5), facing: vec(0, -1), hp: PLAYER.maxHp, stamina: PLAYER.maxStamina,
       action: "idle", actionT: 0, rollDir: vec(0, -1), attackLanded: false, staminaRegenDelay: 0, hitFlash: 0,
+      comboIndex: 0, comboIdleT: PLAYER.comboResetMs, charge: 0, charging: false, buffered: null,
+      hurtT: 0, knockDir: vec(0, 1), knockT: 0, rollPerfect: false, recentRolls: [],
     },
     boss: {
       pos: vec(0, -4), facing: vec(0, 1), hp: spec.stats.maxHp, poiseDamage: 0, phaseIndex: 0, current: null,
       idleT: 0, idleFor: BOSS.openingIdleMs, staggerT: 0, invulnerableT: 0, weaknessT: 0, lastMoveType: null, hitFlash: 0,
+      movesChosen: 0,
     },
     hazards: [],
     projectiles: [],
@@ -73,6 +77,24 @@ const currentPhase = (spec: NemesisSpec, boss: BossState): Phase => {
 
 const isMelee = (type: MoveType) => type === "sweep" || type === "thrust" || type === "nova";
 
+/** Moves the boss is allowed to open with: close, readable, single-commit. */
+const OPENING_MOVES: readonly MoveType[] = ["sweep", "thrust", "nova"];
+
+export type RangeBand = "near" | "mid" | "far";
+
+export const rangeBand = (gap: number): RangeBand => (gap <= BOSS.meleeRange ? "near" : gap <= BOSS.midRange ? "mid" : "far");
+
+/** Relative pick weight of each move type per distance band (edge of the boss to the player's centre). */
+export const BAND_WEIGHTS: Record<RangeBand, Record<MoveType, number>> = {
+  near: { sweep: 3, nova: 2.5, thrust: 1.5, blink: 1, ring: 1.5, charge: 0.25, volley: 0.3, zone: 0.5 },
+  mid: { thrust: 3, charge: 3, blink: 2, volley: 1.5, zone: 1.5, ring: 1, sweep: 0.3, nova: 0.3 },
+  far: { charge: 3.5, blink: 3, volley: 3, zone: 2, ring: 0.6, thrust: 0.8, sweep: 0.1, nova: 0.1 },
+};
+
+/** The player's attack for an action: the combo stage for lights, the heavy otherwise. */
+export const attackFor = (p: Pick<PlayerState, "action" | "comboIndex">): AttackSpec =>
+  p.action === "heavy" ? PLAYER.heavy : PLAYER.combo[Math.min(p.comboIndex, PLAYER.combo.length - 1)] ?? PLAYER.light;
+
 /** Active/recover windows for a move type; ranged moves have no active window. */
 export function moveTiming(type: MoveType): { activeMs: number; recoverMs: number } {
   switch (type) {
@@ -91,7 +113,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
   const state = createInitialState(spec, seed);
   const rng: Rng = createRng(seed);
   const pendingEvents: BattleEvent[] = [];
-  const tickAttack = (attack: typeof PLAYER.light | typeof PLAYER.heavy) => attack.windupMs + attack.activeMs + attack.recoverMs;
+  const tickAttack = (attack: AttackSpec) => attack.windupMs + attack.activeMs + attack.recoverMs;
 
   // ---- player -------------------------------------------------------------------------------
   const rollDirectionLabel = (dir: Vec2, toBoss: Vec2): keyof DeathLog["rolls"] => {
@@ -105,8 +127,73 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     p.action = action;
     p.actionT = 0;
     p.attackLanded = false;
+    p.charging = false;
+    p.charge = 0;
     p.stamina = Math.max(0, p.stamina - cost);
     p.staminaRegenDelay = PLAYER.staminaRegenDelayMs;
+  };
+
+  /** Fraction of the current attack's recover window elapsed, or -1 while still winding up / active. */
+  const recoverFraction = (p: PlayerState): number => {
+    const attack = attackFor(p);
+    const recoverT = p.actionT - attack.windupMs - attack.activeMs;
+    return recoverT < 0 ? -1 : recoverT / attack.recoverMs;
+  };
+
+  /** Whether the current action lets `kind` start right now (idle, or inside a cancel window). */
+  const accepts = (p: PlayerState, kind: PlayerCommand): boolean => {
+    switch (p.action) {
+      case "idle": return true;
+      case "hurt": return false;
+      case "roll": return kind !== "roll" && p.actionT >= PLAYER.roll.cancelMs;
+      case "light": {
+        const f = recoverFraction(p);
+        if (f < 0) return false;
+        if (kind === "roll") return f >= PLAYER.cancel.lightIntoRoll;
+        if (kind === "light") return p.comboIndex < PLAYER.combo.length - 1 && f >= PLAYER.cancel.lightIntoLight;
+        return f >= PLAYER.cancel.lightIntoHeavy;
+      }
+      case "heavy": {
+        const f = recoverFraction(p);
+        return kind === "roll" && f >= PLAYER.cancel.heavyIntoRoll;
+      }
+    }
+  };
+
+  const startCommand = (kind: PlayerCommand, stick: Vec2, input: PlayerInput, toBoss: Vec2, events: BattleEvent[]) => {
+    const p = state.player;
+    if (kind === "roll") {
+      if (p.stamina < PLAYER.roll.stamina) return;
+      const wants = len(stick) > 0.01 ? norm(stick) : len(input.move) > 0.01 ? norm(input.move) : scale(toBoss, -1);
+      p.rollDir = wants;
+      startAction(p, "roll", PLAYER.roll.stamina);
+      p.rollPerfect = false;
+      p.comboIdleT = PLAYER.comboResetMs;
+      p.recentRolls = p.recentRolls.filter((t) => state.timeMs - t <= BOSS.panic.windowMs);
+      p.recentRolls.push(state.timeMs);
+      state.log.rolls[rollDirectionLabel(p.rollDir, toBoss)] += 1;
+      events.push({ type: "playerRoll", dodged: false, perfect: false });
+      return;
+    }
+    if (kind === "heavy") {
+      if (p.stamina < PLAYER.heavy.stamina) return;
+      startAction(p, "heavy", PLAYER.heavy.stamina);
+      p.charging = input.heavyHeld === true;
+      p.comboIdleT = PLAYER.comboResetMs;
+      state.log.heavyAttacks += 1;
+      noteAttackTiming();
+      events.push({ type: "playerAttack", kind: "heavy", combo: 0, charge: 0 });
+      return;
+    }
+    const chaining = p.action === "light" || p.comboIdleT < PLAYER.comboResetMs;
+    const stage = chaining && p.comboIndex + 1 < PLAYER.combo.length ? p.comboIndex + 1 : 0;
+    const attack = PLAYER.combo[stage] ?? PLAYER.light;
+    if (p.stamina < attack.stamina) return;
+    startAction(p, "light", attack.stamina);
+    p.comboIndex = stage;
+    state.log.lightAttacks += 1;
+    noteAttackTiming();
+    events.push({ type: "playerAttack", kind: "light", combo: stage, charge: 0 });
   };
 
   const stepPlayer = (input: PlayerInput, events: BattleEvent[]) => {
@@ -116,43 +203,65 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     const wants = norm(input.move, vec());
     const moving = len(input.move) > 0.01;
 
-    if (p.action === "idle") {
-      if (input.roll && p.stamina >= PLAYER.roll.stamina) {
-        p.rollDir = moving ? wants : scale(toBoss, -1);
-        startAction(p, "roll", PLAYER.roll.stamina);
-        state.log.rolls[rollDirectionLabel(p.rollDir, toBoss)] += 1;
-        events.push({ type: "playerRoll", dodged: false });
-      } else if (input.heavy && p.stamina >= PLAYER.heavy.stamina) {
-        startAction(p, "heavy", PLAYER.heavy.stamina);
-        state.log.heavyAttacks += 1;
-        noteAttackTiming();
-      } else if (input.light && p.stamina >= PLAYER.light.stamina) {
-        startAction(p, "light", PLAYER.light.stamina);
-        state.log.lightAttacks += 1;
-        noteAttackTiming();
-      }
+    // Presses are queued (latest wins) and fire as soon as the current action opens a window for them.
+    if (p.buffered) {
+      p.buffered.age += TICK_MS;
+      if (p.buffered.age > PLAYER.bufferMs) p.buffered = null;
+    }
+    const pressed: PlayerCommand | null = input.roll ? "roll" : input.heavy ? "heavy" : input.light ? "light" : null;
+    if (pressed) p.buffered = { kind: pressed, move: { ...input.move }, age: 0 };
+    if (p.buffered && accepts(p, p.buffered.kind)) {
+      const command = p.buffered;
+      p.buffered = null;
+      startCommand(command.kind, command.move, input, toBoss, events);
     }
 
     if (p.action === "idle") {
       if (moving) p.pos = add(p.pos, wants, (PLAYER.speed * TICK_MS) / 1000);
       p.facing = toBoss;
+      p.comboIdleT = Math.min(PLAYER.comboResetMs, p.comboIdleT + TICK_MS);
     } else if (p.action === "roll") {
       p.actionT += TICK_MS;
       p.pos = add(p.pos, p.rollDir, (PLAYER.roll.distance / PLAYER.roll.durationMs) * TICK_MS);
       if (p.actionT >= PLAYER.roll.durationMs) p.action = "idle";
-    } else {
-      const attack = p.action === "heavy" ? PLAYER.heavy : PLAYER.light;
+    } else if (p.action === "hurt") {
       p.actionT += TICK_MS;
+      if (p.actionT >= PLAYER.hurt.stunMs) p.action = "idle";
+    } else {
+      const attack = attackFor(p);
+      const heavy = p.action === "heavy";
       p.facing = toBoss;
+      if (heavy && p.charging && input.heavyHeld !== true) p.charging = false;
+      if (heavy && p.charging && p.actionT + TICK_MS >= attack.windupMs) {
+        // Parked at the end of the windup: the swing waits for the release or a full charge.
+        p.charge = Math.min(1, p.charge + TICK_MS / PLAYER.charge.maxMs);
+        if (p.charge >= 1) p.charging = false;
+      } else {
+        p.actionT += TICK_MS;
+      }
+      const chargeMul = (mul: number) => 1 + (mul - 1) * (heavy ? p.charge : 0);
       const inActive = p.actionT >= attack.windupMs && p.actionT < attack.windupMs + attack.activeMs;
+      if (inActive) {
+        const gap = dist(p.pos, b.pos) - BOSS.radius - PLAYER.radius;
+        const lunge = attack.lunge * chargeMul(PLAYER.charge.lungeMul);
+        p.pos = add(p.pos, toBoss, Math.max(0, Math.min(gap, (lunge / attack.activeMs) * TICK_MS)));
+      }
       if (inActive && !p.attackLanded && dist(p.pos, b.pos) <= attack.range + BOSS.radius && b.invulnerableT <= 0) {
         p.attackLanded = true;
-        hitBoss(attack.damage, attack.poise, p.action === "heavy", events);
+        hitBoss(Math.round(attack.damage * chargeMul(PLAYER.charge.damageMul)), attack.poise * chargeMul(PLAYER.charge.poiseMul), heavy, events, heavy ? 0 : p.comboIndex, heavy ? p.charge : 0);
       }
-      if (p.actionT >= tickAttack(attack)) p.action = "idle";
+      if (p.actionT >= tickAttack(attack)) {
+        p.action = "idle";
+        p.comboIdleT = heavy ? PLAYER.comboResetMs : 0;
+      }
     }
 
+    if (p.knockT > 0) {
+      p.knockT = Math.max(0, p.knockT - TICK_MS);
+      p.pos = add(p.pos, p.knockDir, (PLAYER.hurt.knockback / PLAYER.hurt.knockbackMs) * TICK_MS);
+    }
     p.pos = clampToDisc(p.pos, ARENA_RADIUS - PLAYER_EDGE_MARGIN);
+    p.hurtT = Math.max(0, p.hurtT - TICK_MS);
     p.staminaRegenDelay = Math.max(0, p.staminaRegenDelay - TICK_MS);
     if (p.staminaRegenDelay === 0 && p.action !== "roll") p.stamina = Math.min(PLAYER.maxStamina, p.stamina + (PLAYER.staminaRegenPerSec * TICK_MS) / 1000);
     p.hitFlash = Math.max(0, p.hitFlash - TICK_MS);
@@ -167,18 +276,33 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
 
   const playerInvulnerable = () => state.player.action === "roll" && state.player.actionT <= PLAYER.roll.iframeMs;
 
-  const hurtPlayer = (damage: number, source: MoveType, events: BattleEvent[]) => {
+  const hurtPlayer = (damage: number, source: MoveType, events: BattleEvent[], from?: Vec2) => {
     const p = state.player;
     if (state.outcome !== "fighting") return;
+    if (p.hurtT > 0) return;
     if (playerInvulnerable()) {
+      const perfect = !p.rollPerfect && p.actionT <= PLAYER.perfectRoll.windowMs;
+      if (perfect) {
+        p.rollPerfect = true;
+        p.stamina = Math.min(PLAYER.maxStamina, p.stamina + PLAYER.perfectRoll.staminaRefund);
+      }
       state.log.rollsDodged += 1;
-      events.push({ type: "playerRoll", dodged: true });
+      events.push({ type: "playerRoll", dodged: true, perfect });
       return;
     }
     p.hp = debug.playerInvulnerable ? p.hp : Math.max(0, p.hp - damage);
     p.hitFlash = 200;
+    p.hurtT = PLAYER.hurt.invulnMs;
+    const away = from ? sub(p.pos, from) : sub(p.pos, state.boss.pos);
+    p.knockDir = norm(away, scale(state.player.facing, -1));
+    p.knockT = PLAYER.hurt.knockbackMs;
+    p.action = "hurt";
+    p.actionT = 0;
+    p.charging = false;
+    p.charge = 0;
+    p.comboIdleT = PLAYER.comboResetMs;
     state.log.hitsTaken[source] = (state.log.hitsTaken[source] ?? 0) + 1;
-    events.push({ type: "playerHit", move: source, damage, hp: p.hp });
+    events.push({ type: "playerHit", move: source, damage, hp: p.hp, dir: { ...p.knockDir } });
     if (p.hp <= 0) {
       state.outcome = "playerDead";
       state.log.killedBy = source;
@@ -189,8 +313,11 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     }
   };
 
+  /** Where a hazard came from, for knockback direction. */
+  const hazardOrigin = (shape: HazardShape): Vec2 => (shape.kind === "line" ? shape.start : shape.center);
+
   // ---- boss ---------------------------------------------------------------------------------
-  const hitBoss = (damage: number, poise: number, heavy: boolean, events: BattleEvent[]) => {
+  const hitBoss = (damage: number, poise: number, heavy: boolean, events: BattleEvent[], combo: number, charge: number) => {
     const b = state.boss;
     const weakness = b.weaknessT > 0;
     const dealt = Math.round(damage * (weakness ? spec.weakness.multiplier : 1));
@@ -198,7 +325,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     b.hitFlash = 120;
     b.poiseDamage += poise;
     if (weakness) state.log.weaknessHits += 1;
-    events.push({ type: "bossHit", damage: dealt, heavy, weakness, hp: b.hp });
+    events.push({ type: "bossHit", damage: dealt, heavy, weakness, hp: b.hp, combo, charge });
     if (heavy && spec.weakness.trigger === "heavy_hit" && b.weaknessT <= 0) openWeakness(events);
     if (b.poiseDamage >= spec.stats.poise && b.staggerT <= 0) {
       b.poiseDamage = 0;
@@ -220,23 +347,41 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
     events.push({ type: "weaknessOpen", ms: BOSS.weaknessWindowMs });
   };
 
+  const playerPanicRolling = () => state.player.recentRolls.filter((t) => state.timeMs - t <= BOSS.panic.windowMs).length >= BOSS.panic.rolls;
+
   const chooseMove = (phase: Phase): Move => {
     const b = state.boss;
-    if (b.lastMoveType === null) {
-      // Opening move: the gentlest option so the first exchange teaches rather than punishes.
-      const gentlest = [...phase.moves].sort((x, y) => x.damage - y.damage)[0];
+    b.movesChosen += 1;
+    if (b.movesChosen === 1) {
+      // Opening move: a close, single-commit swing so the first exchange teaches the telegraph language.
+      const openers = phase.moves.filter((m) => OPENING_MOVES.includes(m.type)).sort((x, y) => x.damage - y.damage);
+      const gentlest = openers[0] ?? [...phase.moves].sort((x, y) => x.damage - y.damage)[0];
       if (gentlest) return gentlest;
     }
-    const near = dist(b.pos, state.player.pos) <= BOSS.meleeRange + 1.5;
-    const candidates = phase.moves.filter((m) => m.type !== b.lastMoveType || phase.moves.length === 1);
-    const preferred = candidates.filter((m) => (near ? isMelee(m.type) || m.type === "blink" : !isMelee(m.type)));
-    const pool = preferred.length > 0 && rng.next() < 0.7 ? preferred : candidates;
-    return rng.pick(pool);
+    const band = rangeBand(dist(b.pos, state.player.pos) - BOSS.radius);
+    const weights = BAND_WEIGHTS[band];
+    const panic = playerPanicRolling();
+    const scored = phase.moves.map((m) => {
+      let w = weights[m.type];
+      if (m.type === b.lastMoveType && phase.moves.length > 1) w *= 0.2;
+      // Lingering hazards punish a player who rolls on reflex: the roll ends inside them.
+      if (panic && (m.type === "zone" || m.type === "nova" || m.type === "ring")) w *= 1.8;
+      return { m, w };
+    });
+    const total = scored.reduce((sum, s) => sum + s.w, 0);
+    let roll = rng.next() * total;
+    for (const s of scored) {
+      roll -= s.w;
+      if (roll <= 0) return s.m;
+    }
+    return scored[scored.length - 1]?.m ?? rng.pick(phase.moves);
   };
 
   const beginMove = (move: Move, followUp: boolean, events: BattleEvent[]) => {
     const b = state.boss;
-    const telegraphMs = followUp ? Math.max(500, move.telegraphMs * BOSS.followUpTelegraphScale) : move.telegraphMs;
+    let telegraphMs = followUp ? Math.max(500, move.telegraphMs * BOSS.followUpTelegraphScale) : move.telegraphMs;
+    // A player who rolls on reflex gets a delayed commit that lands after the i-frames.
+    if (!followUp && isMelee(move.type) && playerPanicRolling()) telegraphMs *= BOSS.panic.telegraphScale;
     b.current = { move, phase: "telegraph", t: 0, aim: { ...state.player.pos }, travel: vec(), telegraphMs, spawned: false };
     b.lastMoveType = move.type;
     events.push({ type: "telegraph", move: move.type, ms: telegraphMs });
@@ -353,6 +498,10 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       // Track the player slowly during telegraph so the commit point is readable but not free.
       current.aim = add(current.aim, sub(p.pos, current.aim), 0.06);
       b.facing = norm(sub(current.aim, b.pos), b.facing);
+      // Melee swings step in while winding up so a player backing off is still met by the arc.
+      if (isMelee(current.move.type) && dist(b.pos, p.pos) > BOSS.meleeRange * 0.75) {
+        b.pos = clampToDisc(add(b.pos, b.facing, (BOSS.walkSpeed * 0.55 * TICK_MS) / 1000), BOSS_LIMIT);
+      }
       if (current.t >= current.telegraphMs) {
         current.phase = "active";
         current.t = 0;
@@ -365,7 +514,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         b.pos = clampToDisc(add(b.pos, current.travel, TICK_MS / 1000), BOSS_LIMIT);
         if (dist(b.pos, p.pos) <= MOVE.charge.hitRadius * current.move.scale + PLAYER.radius && !current.spawned) {
           current.spawned = true;
-          hurtPlayer(current.move.damage, "charge", events);
+          hurtPlayer(current.move.damage, "charge", events, b.pos);
         }
       }
       if (current.t >= timing.activeMs) {
@@ -395,7 +544,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
         h.hit = true;
         h.cooldown = MOVE.zone.tickMs;
         // Lingering zones tick for a fraction of the listed damage; one-shot hazards deal it all.
-        hurtPlayer(h.repeat ? Math.max(1, Math.round(h.damage * MOVE.zone.tickFraction)) : h.damage, h.source, events);
+        hurtPlayer(h.repeat ? Math.max(1, Math.round(h.damage * MOVE.zone.tickFraction)) : h.damage, h.source, events, hazardOrigin(h.shape));
       }
       next.push(h);
     }
@@ -406,7 +555,7 @@ export function createBattle(spec: NemesisSpec, seed = 1): Battle {
       pr.pos = add(pr.pos, pr.vel, TICK_MS / 1000);
       if (len(pr.pos) > ARENA_RADIUS + 1) continue;
       if (dist(pr.pos, p.pos) <= pr.radius + PLAYER.radius) {
-        hurtPlayer(pr.damage, "volley", events);
+        hurtPlayer(pr.damage, "volley", events, sub(p.pos, pr.vel));
         continue;
       }
       alive.push(pr);

@@ -233,3 +233,9 @@ kbd { display: inline-flex; min-width: 25px; min-height: 23px; align-items: cent
   #hit-vignette.flash { animation: none; }
   .boss-intro, .letterbox { transition: none; }
 }
+
+#grudge { background: #efe9dc; color: #1a1712; transform: rotate(-1.5deg); border: 1px dashed #1a1712;
+  max-width: 46ch; padding: 10px 16px; }
+#grudge .grudge-label { font-family: var(--font-display); font-size: 11px; letter-spacing: 0.35em; opacity: 0.7; }
+#grudge p { margin: 4px 0 0; opacity: 1; }
+#grudge #grudge-patch { font-style: italic; opacity: 0.75; }

@@ -12,7 +12,7 @@ export const LIMITS = {
   phases: { min: 1, max: 3 },
   weaknessMultiplier: { min: 1.25, max: 3 },
   bpm: { min: 60, max: 200 },
-  taunts: { min: 1, max: 4 },
+  taunts: { min: 1, max: 6 },
   playerDeathLines: { min: 1, max: 3 },
   lineLength: { max: 160 },
   nameLength: { max: 40 },

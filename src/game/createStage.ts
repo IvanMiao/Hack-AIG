@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { addOutline, createToonMaterial } from "./materials";
 import { instantiate, loadAssetLibrary, type AssetLibrary } from "./assets";
 import { createHazardView } from "./hazardView";
+import { nextCameraYaw } from "./cameraFollow";
 import type { NemesisSpec } from "../spec";
 import { ARENA_RADIUS, PLAYER, moveTiming, type BattleEvent, type BattleState, type Vec2 } from "../sim";
 import skyUrl from "../../blender/art/textures/sky.jpg?url";
@@ -562,6 +563,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   let bossSpawn = 1;
   let attractAngle = 0;
   let first = true;
+  let cameraYaw: number | null = null;
   let shake = 0;
   const shakeOffset = new THREE.Vector3();
   const toBoss = new THREE.Vector3();
@@ -911,8 +913,9 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
 
     hazards.sync(state);
     toBoss.subVectors(boss.position, player.position).setY(0);
-    const distance = toBoss.length() || 1;
-    toBoss.divideScalar(distance);
+    if (mode === "fight") cameraYaw = nextCameraYaw(cameraYaw, toBoss.x, toBoss.z, step, p.action === "roll");
+    if (cameraYaw !== null && mode === "fight") toBoss.set(Math.sin(cameraYaw), 0, Math.cos(cameraYaw));
+    else toBoss.normalize();
     const right = new THREE.Vector3(-toBoss.z, 0, toBoss.x);
     if (mode === "fight") {
       desired.copy(player.position).addScaledVector(toBoss, -6.8).addScaledVector(right, 4.2).setY(4.6);
@@ -989,7 +992,10 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
     applySpec,
     preloadBoss,
     setSky,
-    setMode: (nextMode) => { mode = nextMode; },
+    setMode: (nextMode) => {
+      cameraYaw = null;
+      mode = nextMode;
+    },
     cameraRelative: (move) => {
       camera.getWorldDirection(cameraForward).setY(0);
       if (cameraForward.lengthSq() < 1e-6) return move;

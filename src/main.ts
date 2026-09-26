@@ -59,6 +59,8 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const INTRO_PORTRAIT_MS = 5200;
 const INTRO_CARD_MS = 2500;
+/** Longest a spoken line may hold its subtitle if the clip never reports ending. */
+const VOICE_LINE_MAX_MS = 12_000;
 let spec: NemesisSpec | null = null;
 let lineage: Lineage | null = null;
 let battle: Battle | null = null;
@@ -71,7 +73,7 @@ let portraitTimer: number | undefined;
 let introTimer: number | undefined;
 let introHoldMs = 0;
 let introFadeTimer: number | undefined;
-let introSpoken = false;
+let battleStartedAt = 0;
 let summonToken = 0;
 
 const say = (line: string, holdMs = 3200) => {
@@ -79,6 +81,20 @@ const say = (line: string, holdMs = 3200) => {
   subtitle.classList.add("visible");
   window.clearTimeout(subtitleTimer);
   subtitleTimer = window.setTimeout(() => subtitle.classList.remove("visible"), holdMs);
+};
+
+/** Subtitle and clip for the same line: the text stays up for as long as the boss is actually saying it. */
+const speakLine = (name: string, line: string, holdMs = 3200) => {
+  say(line, holdMs);
+  const spoken = audio.speak(name, () => {
+    if (subtitle.textContent !== line) return;
+    window.clearTimeout(subtitleTimer);
+    subtitleTimer = window.setTimeout(() => subtitle.classList.remove("visible"), 400);
+  });
+  if (spoken) {
+    window.clearTimeout(subtitleTimer);
+    subtitleTimer = window.setTimeout(() => subtitle.classList.remove("visible"), Math.max(holdMs, VOICE_LINE_MAX_MS));
+  }
 };
 
 const showPortrait = (ms: number | null) => {
@@ -166,10 +182,8 @@ function applyAsset(bundle: AssetBundle) {
       break;
     case "voice":
       audio.setVoice(bundle.files);
-      if (!introSpoken) {
-        introSpoken = true;
-        audio.speak("intro");
-      }
+      // Voice that lands during the intro still gets to say the intro; any later and it would talk over the fight.
+      if (spec && battle && performance.now() - battleStartedAt < INTRO_PORTRAIT_MS) speakLine("intro", spec.voice.lines.intro, 4500);
       break;
     default:
       break;
@@ -180,7 +194,6 @@ type SummonResult = { spec: NemesisSpec; source: "gemini" | "fallback"; lineage?
 
 async function summon(incantation: string, forgeSpec: () => Promise<SummonResult>, chosen = false) {
   const token = ++summonToken;
-  introSpoken = false;
   portrait.src = "";
   portrait.classList.remove("shown");
   stage.setSky(null);
@@ -220,7 +233,7 @@ async function summon(incantation: string, forgeSpec: () => Promise<SummonResult
     applyAsset(bundle);
     ritual.markAsset(bundle);
   }
-  await requestAllAssets(result.spec.code, {
+  await requestAllAssets(result.spec, {
     onReady: (bundle) => {
       if (token !== summonToken) return;
       applyAsset(bundle);
@@ -286,12 +299,9 @@ function startBattle(next: NemesisSpec) {
     }, reducedMotion.matches ? 0 : 400);
   }, reducedMotion.matches ? 0 : INTRO_CARD_MS);
   audio.playPhase(1);
-  say(next.voice.lines.intro, 4500);
+  battleStartedAt = performance.now();
+  speakLine("intro", next.voice.lines.intro, 4500);
   showPortrait(INTRO_PORTRAIT_MS);
-  if (!introSpoken) {
-    introSpoken = true;
-    audio.speak("intro");
-  }
   syncHud();
 }
 
@@ -420,20 +430,17 @@ function handleEvents(events: readonly BattleEvent[]) {
         hitStopMs = Math.max(hitStopMs, 220);
         syncPhasePips(event.phaseIndex);
         document.body.classList.toggle("flatline", spec.phases[event.phaseIndex]?.rule === "flatline");
-        say(spec.voice.lines.phase, 4000);
-        audio.speak("phase");
+        speakLine("phase", spec.voice.lines.phase, 4000);
         audio.playPhase(2);
         break;
       case "taunt":
-        say(spec.voice.lines.taunt[event.index] ?? spec.voice.lines.taunt[0] ?? "");
-        audio.speak(`taunt${event.index}`);
+        speakLine(`taunt${event.index}`, spec.voice.lines.taunt[event.index] ?? spec.voice.lines.taunt[0] ?? "");
         break;
       case "weaknessOpen":
-        say("— an opening —", 1200);
+        if (!audio.isSpeaking()) say("— an opening —", 1200);
         break;
       case "playerDeath":
-        say(spec.voice.lines.playerDeath[event.lineIndex] ?? spec.voice.lines.playerDeath[0] ?? "", 6000);
-        audio.speak(`playerDeath${event.lineIndex}`);
+        speakLine(`playerDeath${event.lineIndex}`, spec.voice.lines.playerDeath[event.lineIndex] ?? spec.voice.lines.playerDeath[0] ?? "", 6000);
         rememberDeath(battle.state.log, spec.code);
         recordFightOutcome("kill");
         {

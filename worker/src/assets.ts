@@ -1,4 +1,4 @@
-import { FALLBACK_SPECS, type NemesisSpec } from "../../src/spec";
+import { FALLBACK_SPECS, LIMITS, type NemesisSpec, type Voice, type VoiceLines } from "../../src/spec";
 import type { Env } from "./env";
 import { generateImage, generateMusicClip, type MediaBlob } from "./gemini";
 import { designVoice, discardVoice, synthesize } from "./gradium";
@@ -65,7 +65,7 @@ async function buildMusic(env: Env, spec: NemesisSpec): Promise<Record<string, s
 }
 
 /** Every spoken line the fight can trigger, keyed the way the client looks them up. */
-export function voiceLineEntries(spec: NemesisSpec): Array<[name: string, text: string]> {
+export function voiceLineEntries(spec: Pick<NemesisSpec, "voice">): Array<[name: string, text: string]> {
   const { lines } = spec.voice;
   return [
     ["intro", lines.intro],
@@ -93,26 +93,62 @@ async function mapPooled<T, R>(items: readonly T[], width: number, fn: (item: T)
   return results;
 }
 
-async function buildVoice(env: Env, spec: NemesisSpec): Promise<Record<string, string>> {
-  const voiceId = await designVoice(env, `${spec.voice.designPrompt}. Speaks English.`);
+/** The text the client will put on screen; the request may carry it so the audio is synthesized from exactly those words. */
+export type VoiceScript = Pick<Voice, "designPrompt" | "lines">;
+
+const isLine = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= LIMITS.lineLength.max;
+const isLineList = (value: unknown, max: number): value is string[] => Array.isArray(value) && value.length >= 1 && value.length <= max && value.every(isLine);
+
+export function parseVoiceScript(input: unknown): VoiceScript | null {
+  if (!input || typeof input !== "object") return null;
+  const { designPrompt, lines } = input as { designPrompt?: unknown; lines?: unknown };
+  if (typeof designPrompt !== "string" || !lines || typeof lines !== "object") return null;
+  const { intro, phase, taunt, playerDeath, defeat } = lines as Partial<Record<keyof VoiceLines, unknown>>;
+  if (!isLine(intro) || !isLine(phase) || !isLine(defeat)) return null;
+  if (!isLineList(taunt, LIMITS.taunts.max) || !isLineList(playerDeath, LIMITS.playerDeathLines.max)) return null;
+  return { designPrompt: designPrompt.slice(0, 300), lines: { intro, phase, taunt, playerDeath, defeat } };
+}
+
+async function scriptHash(voice: VoiceScript): Promise<string> {
+  const text = JSON.stringify([voice.designPrompt, ...voiceLineEntries({ voice })]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].slice(0, 6).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function buildVoice(env: Env, code: string, voice: VoiceScript, hash: string): Promise<Record<string, string>> {
+  const voiceId = await designVoice(env, `${voice.designPrompt}. Speaks English.`);
   try {
-    const entries = await mapPooled(voiceLineEntries(spec), TTS_CONCURRENCY, async ([name, text]): Promise<[string, string]> =>
-      [name, await storeBlob(env, spec.code, `voice-${name}`, await synthesize(env, voiceId, text))]);
+    const entries = await mapPooled(voiceLineEntries({ voice }), TTS_CONCURRENCY, async ([name, text]): Promise<[string, string]> =>
+      [name, await storeBlob(env, code, `voice-${hash}-${name}`, await synthesize(env, voiceId, text))]);
     return Object.fromEntries(entries);
   } finally {
     await discardVoice(env, voiceId);
   }
 }
 
-const builders: Record<AssetKind, (env: Env, spec: NemesisSpec) => Promise<Record<string, string>>> = {
+const builders: Record<Exclude<AssetKind, "voice">, (env: Env, spec: NemesisSpec) => Promise<Record<string, string>>> = {
   sky: buildSky,
   portrait: buildPortrait,
   music: buildMusic,
-  voice: buildVoice,
 };
+
+/**
+ * Voice is keyed by the script it speaks, not just the code: a boss whose lines changed (grudge, re-authored fallback,
+ * client/worker skew) gets fresh audio instead of the words of an older self. Needs no stored spec, only the code.
+ */
+export async function buildVoiceAsset(env: Env, code: string, voice: VoiceScript): Promise<AssetManifest> {
+  const hash = await scriptHash(voice);
+  const key = `${manifestKey(code, "voice")}:${hash}`;
+  const cached = await env.NEMESIS_KV.get<Record<string, string>>(key, "json");
+  if (cached) return { kind: "voice", files: cached, cached: true };
+  const files = await buildVoice(env, code, voice, hash);
+  await env.NEMESIS_KV.put(key, JSON.stringify(files), { expirationTtl: BLOB_TTL_SECONDS });
+  return { kind: "voice", files, cached: false };
+}
 
 /** Generate (or reuse) one asset bundle for a forged boss. Kinds are independent so the client can fetch all four in parallel. */
 export async function buildAsset(env: Env, spec: NemesisSpec, kind: AssetKind): Promise<AssetManifest> {
+  if (kind === "voice") return buildVoiceAsset(env, spec.code, spec.voice);
   const key = manifestKey(spec.code, kind);
   const cached = await env.NEMESIS_KV.get<Record<string, string>>(key, "json");
   if (cached) return { kind, files: cached, cached: true };

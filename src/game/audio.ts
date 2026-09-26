@@ -7,8 +7,13 @@ export interface GameAudio {
   /** Start (or crossfade to) the loop for a phase; safe to call before setMusic — it starts once music lands. */
   playPhase(phase: 1 | 2): void;
   setVoice(files: Record<string, string>): void;
-  /** Play a spoken line by name (`intro`, `taunt1`…); music ducks while the boss speaks. Unknown names are ignored. */
-  speak(name: string): void;
+  /**
+   * Play a spoken line by name (`intro`, `taunt1`…); music ducks while the boss speaks. Unknown names are ignored and
+   * return false. `onEnded` fires once the clip finishes (or fails), unless another line has taken over by then.
+   */
+  speak(name: string, onEnded?: () => void): boolean;
+  /** True while a spoken line is playing. */
+  isSpeaking(): boolean;
   stopMusic(): void;
 }
 
@@ -45,21 +50,25 @@ export function createGameAudio(): GameAudio {
     if (previous) fadeTo(previous, 0, FADE_MS, () => previous.pause());
   };
 
-  const speak = (name: string) => {
+  const speak = (name: string, onEnded?: () => void) => {
     const line = voices.get(name);
-    if (!line) return;
+    if (!line) return false;
     speaking?.pause();
     speaking = line;
     line.currentTime = 0;
     const current = playing ? loops[playing] : null;
     if (current) fadeTo(current, DUCKED_VOLUME, 250);
-    line.onended = () => {
+    const finish = () => {
       if (speaking !== line) return;
       speaking = null;
       const loop = playing ? loops[playing] : null;
       if (loop) fadeTo(loop, MUSIC_VOLUME, 600);
+      onEnded?.();
     };
-    void line.play().catch(() => undefined);
+    line.onended = finish;
+    line.onerror = finish;
+    void line.play().catch(finish);
+    return true;
   };
 
   return {
@@ -86,6 +95,7 @@ export function createGameAudio(): GameAudio {
       }
     },
     speak,
+    isSpeaking: () => speaking !== null,
     stopMusic() {
       wantedPhase = null;
       const current = playing ? loops[playing] : null;

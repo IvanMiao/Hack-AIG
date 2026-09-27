@@ -13,13 +13,17 @@ npm run verify    # typecheck, tests, production build
 npm run build:itch
 ```
 
-The boss specs live in `src/spec/fallback.ts`; baked media is indexed by `src/fallbackAssets.json`. Missing optional media stays unavailable in the offline game. The media-generation scripts remain in the repository for private asset production and require the developer's own API keys. They are not part of the public game or deployed Worker.
+The boss specs live in `src/spec/fallback.ts`. Compressed release media lives under `public/fallback` and is indexed by `src/fallbackAssets.json`; the production build checks that every indexed file is present. Keep editable audio and art masters in a separate backup. Missing optional media stays unavailable in the offline game. The media-generation scripts remain in the repository for private asset production and require the developer's own API keys. They are not part of the public game or deployed Worker.
+
+`/dev.html` uses `lil-gui` for local fight and visual tuning. It is a development dependency and is excluded from the itch.io build.
 
 ## Public release
 
-Every push to `main` runs [the publish workflow](.github/workflows/publish.yml). It builds the static game and uploads it to itch.io. It also replaces the existing Cloudflare Worker with a disabled handler. Only `GET /health` responds normally; all other requests return HTTP 410. The Worker has no provider code or KV binding in its deployment entry point.
+Every push to `main` runs [the static publish workflow](.github/workflows/publish.yml), which verifies the game and uploads only the static build to itch.io. It does not deploy the Cloudflare Worker.
 
-The GitHub workflow needs `BUTLER_API_KEY` to publish to itch.io and `CLOUDFLARE_API_TOKEN` to replace the old Worker. **Deploy the disabled Worker before treating the old AI endpoints as closed.** Once deployed, the stored provider secrets can be removed from Cloudflare.
+The existing Worker remains online as a disabled 410 handler: only `GET /health` responds normally, and old game and AI routes return HTTP 410. Its old KV data is retained. If the handler needs to be redeployed, run [the separate manual Worker workflow](.github/workflows/publish-worker.yml) on `main` or `npm run worker:deploy` with your own Cloudflare credentials. The game does not call the Worker or load media from it.
+
+`BUTLER_API_KEY` is required for itch.io uploads. `CLOUDFLARE_API_TOKEN` is used only by the manual Worker workflow. After an upload, verify the public itch.io project page separately; an upload alone does not establish that anonymous visitors can see it.
 
 ## Arena
 

@@ -5,6 +5,7 @@ import { createCombatInput } from "./game/input";
 import { applyGrudge, FALLBACK_SPECS, getFallbackSpec, getFallbackSpecByCode, PLAYER_MAX_HP, ruleGrudge, type NemesisSpec } from "./spec";
 import { BOSS, createBattle, createInitialState, PLAYER, TICK_MS, type Battle, type BattleEvent } from "./sim";
 import { createRitual } from "./ui/ritual";
+import { presentationFor } from "./ui/presentation";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -38,6 +39,7 @@ const grudgeCard = $("grudge");
 const grudgeObservation = $("grudge-observation");
 const grudgePatch = $("grudge-patch");
 const introCard = $("boss-intro");
+const enterButton = $("enter-btn");
 const stage = createStage(canvas);
 const combat = createCombatInput(canvas);
 const audio = createGameAudio();
@@ -126,6 +128,19 @@ function applyAsset(bundle: AssetBundle) {
   }
 }
 
+function applyPresentation(next: NemesisSpec) {
+  const copy = presentationFor(next);
+  enterButton.textContent = copy.enter;
+  $("player-health-label").textContent = copy.playerHealth;
+  playerHp.parentElement?.setAttribute("aria-label", copy.playerHealthAria);
+  $("player-stamina-label").textContent = copy.playerStamina;
+  playerStamina.parentElement?.setAttribute("aria-label", copy.playerStaminaAria);
+  $("boss-eyebrow").textContent = copy.bossEyebrow;
+  bossHp.parentElement?.setAttribute("aria-label", copy.bossHealthAria);
+  bossPoise.parentElement?.setAttribute("aria-label", copy.bossPoiseAria);
+  $("intro-eyebrow").textContent = copy.introEyebrow;
+}
+
 function summon(next: NemesisSpec) {
   const token = ++summonToken;
   pendingGrudge = null;
@@ -136,8 +151,9 @@ function summon(next: NemesisSpec) {
   stage.setSky(null);
   audio.stopMusic();
   incantationPanel.classList.add("hidden");
-  ritual.begin(next.identity.incantation);
+  ritual.begin(next.identity.title);
   spec = next;
+  applyPresentation(next);
   stage.applySpec(next);
   document.documentElement.style.setProperty("--accent", next.art.accentHex);
   ritual.revealSpec(next);
@@ -171,6 +187,7 @@ function syncPhasePips(phaseIndex: number) {
 
 function startBattle(next: NemesisSpec) {
   spec = next;
+  applyPresentation(next);
   seed += 1;
   battle = createBattle(next, seed);
   accumulator = 0;
@@ -229,7 +246,8 @@ function renderGrudge() {
 
 function showOutcome(kind: "death" | "victory") {
   if (!spec) return;
-  $("outcome-title").textContent = kind === "death" ? "PLATFORM COMPROMISED" : "MODEL DEACTIVATED";
+  const copy = presentationFor(spec);
+  $("outcome-title").textContent = kind === "death" ? copy.deathTitle : copy.victoryTitle;
   $("outcome-line").textContent = kind === "death" ? `${spec.identity.name} remembers this defeat.` : spec.voice.lines.defeat;
   if (kind === "death" && pendingGrudge) {
     grudgeCard.classList.remove("hidden");
@@ -295,15 +313,17 @@ function handleEvents(events: readonly BattleEvent[]) {
           console.warn("[grudge] local adaptation failed", error);
           pendingGrudge = null;
         }
+        const finishedBattle = battle;
         window.setTimeout(() => {
-          if (battle) showOutcome("death");
+          if (battle === finishedBattle) showOutcome("death");
         }, 900);
         break;
       case "bossDefeat":
         audio.speak("defeat");
         audio.stopMusic();
+        const defeatedBattle = battle;
         window.setTimeout(() => {
-          if (battle) showOutcome("victory");
+          if (battle === defeatedBattle) showOutcome("victory");
         }, 900);
         break;
       default:

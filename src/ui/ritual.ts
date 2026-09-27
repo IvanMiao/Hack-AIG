@@ -9,7 +9,7 @@ const TOTAL_TASKS = 5;
 const AUTO_ENTER_DELAY_MS = 1400;
 
 export interface Ritual {
-  begin(incantation: string): void;
+  begin(bossTitle: string): void;
   /** Show the selected offline boss and its bundled assets. */
   revealSpec(spec: NemesisSpec): void;
   markAsset(bundle: AssetBundle): void;
@@ -82,14 +82,14 @@ export function createRitual(): Ritual {
   });
 
   return {
-    begin(incantation) {
+    begin(bossTitle) {
       settled = 0;
       modelFraction = 0;
       modelSettled = false;
       entered = false;
       fill.style.width = "0%";
       progress.setAttribute("aria-valuenow", "0");
-      echo.textContent = `“${incantation}”`;
+      echo.textContent = bossTitle;
       status.textContent = "Loading the arena…";
       enter.disabled = true;
       for (const name of CARD_NAMES) {
@@ -102,7 +102,7 @@ export function createRitual(): Ritual {
       panel.classList.remove("hidden");
     },
     revealSpec(spec) {
-      const { identity, voice, arenaTheme, music, weakness, phases } = spec;
+      const { identity, voice, arenaTheme, weakness, phases } = spec;
       const secondWind = Math.round((phases[1]?.hpThreshold ?? 0.5) * 100);
       const silhouette = oneOf(SILHOUETTES, identity.silhouette);
       const element = oneOf(ELEMENTS, identity.element);
@@ -111,9 +111,9 @@ export function createRitual(): Ritual {
       childOf(card("form"), ".card-body").innerHTML =
         `<strong>${text(identity.name)}</strong><em>${text(identity.title)}</em><span>${text(silhouette)} · ${text(element)}</span>`;
       childOf(card("temper"), ".card-body").innerHTML =
-        `<strong>${text(temper)}</strong><span>${num(music.bpm)} bpm · second wind at ${num(secondWind)}% hp</span>`;
+        `<strong>${text(temper)}</strong><span>Second phase at ${num(secondWind)}% health</span>`;
       childOf(card("voice"), ".card-body").innerHTML =
-        `<span class="whisper">${text(voice.designPrompt)}</span><q>${text(voice.lines.intro)}</q>`;
+        `<q>${text(voice.lines.intro)}</q>`;
       childOf(card("arena"), ".card-body").innerHTML =
         `<span>${text(arenaTheme)}</span><span class="whisper">opening: ${text(trigger)} ×${num(weakness.multiplier)}</span>`;
       CARD_NAMES.forEach((name, i) => window.setTimeout(() => card(name).classList.add("revealed"), 120 + i * 260));

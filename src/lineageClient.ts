@@ -4,7 +4,8 @@ import { checkInvariants, FALLBACK_SPECS, type NemesisSpec } from "./spec";
 
 const LOOKUP_TIMEOUT_MS = 12_000;
 
-export interface HuntedNemesis { spec: NemesisSpec; lineage: Lineage }
+/** `token` is the Worker's forge token for the code; absent when a bound nightmare resolved locally. */
+export interface HuntedNemesis { spec: NemesisSpec; lineage: Lineage; token?: string }
 
 /** Merge the KV counters with the spec's own generation, which is the one GRUDGE actually advances. */
 export const lineageFor = (spec: NemesisSpec, counters?: Partial<Lineage> | null): Lineage => ({
@@ -30,10 +31,10 @@ export async function fetchNemesis(code: string): Promise<HuntedNemesis | null> 
     const response = await fetch(`${FORGE_URL}/nemesis/${encodeURIComponent(code)}`, { signal: controller.signal });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`nemesis ${response.status}`);
-    const data = (await response.json()) as { spec: NemesisSpec; lineage?: Partial<Lineage> };
+    const data = (await response.json()) as { spec: NemesisSpec; lineage?: Partial<Lineage>; token?: string };
     const problems = checkInvariants(data.spec);
     if (problems.length > 0) throw new Error(`unfair spec: ${problems.join("; ")}`);
-    return { spec: data.spec, lineage: lineageFor(data.spec, data.lineage) };
+    return { spec: data.spec, lineage: lineageFor(data.spec, data.lineage), token: data.token };
   } finally {
     clearTimeout(timer);
   }

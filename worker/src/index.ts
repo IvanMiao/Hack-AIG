@@ -7,8 +7,7 @@ import { corsHeaders, error, json, readJson } from "./http";
 import { learnNemesis } from "./learn";
 import { getLineage, recordOutcome } from "./lineage";
 import { rateLimit, type RateLimitBucket } from "./rateLimit";
-import { checkInvariants, type NemesisSpec } from "../../src/spec";
-import type { DeathLog } from "../../src/sim/types";
+import { parseDeathLog } from "../../src/spec";
 
 const MAX_INCANTATION_CHARS = 280;
 
@@ -83,13 +82,17 @@ export default {
       }
 
       if (path === "/learn" && request.method === "POST") {
-        const body = await readJson<{ spec?: NemesisSpec; deathLog?: DeathLog }>(request);
-        if (!body?.spec || !body?.deathLog) return error(400, "need spec and deathLog", cors);
-        const problems = checkInvariants(body.spec);
-        if (problems.length > 0) return error(400, `unfair spec: ${problems.join("; ")}`, cors);
+        // The stored spec is the only one that evolves: the client names the code and describes the death, nothing more.
+        const body = await readJson<{ code?: unknown; deathLog?: unknown }>(request);
+        const code = typeof body?.code === "string" ? body.code : "";
+        if (!/^[A-Za-z0-9-]{4,16}$/.test(code)) return error(400, "bad code", cors);
+        const log = parseDeathLog(body?.deathLog);
+        if (!log.ok) return error(400, `bad deathLog: ${log.errors.join("; ")}`, cors);
+        const spec = await loadSpecByCode(env, code);
+        if (!spec) return error(404, "unknown nemesis", cors);
         const limited = await throttled("learn");
         if (limited) return limited;
-        return json(await learnNemesis(env, body.spec, body.deathLog), {}, cors);
+        return json(await learnNemesis(env, spec, log.log), {}, cors);
       }
 
       if (path === "/voice-token" && request.method === "POST") {

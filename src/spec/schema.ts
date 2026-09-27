@@ -1,4 +1,5 @@
-import Ajv, { type JSONSchemaType } from "ajv";
+import Ajv, { type JSONSchemaType, type Schema } from "ajv";
+import type { DeathLog } from "../sim/types";
 import {
   ELEMENTS, MOVE_TYPES, PHASE_RULES, SILHOUETTES, TEMPERS, WEAKNESS_TRIGGERS,
   type ForgeDraft, type Move, type Phase, type VoiceLines,
@@ -124,5 +125,51 @@ export type DraftValidation = { ok: true; draft: ForgeDraft } | { ok: false; err
 export function parseForgeDraft(input: unknown): DraftValidation {
   if (validateForgeDraft(input)) return { ok: true, draft: input };
   const errors = (validateForgeDraft.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? ""}`.trim());
+  return { ok: false, errors };
+}
+
+const count = { type: "integer", minimum: 0, maximum: 100_000 } as const;
+const HAZARD_SOURCES = [...MOVE_TYPES, "arena"] as const;
+
+/** Shape of the death log a client may submit to /learn: bounded counters and enum hazards only. */
+export const deathLogSchema = {
+  type: "object",
+  properties: {
+    durationMs: { type: "number", minimum: 0, maximum: 86_400_000 },
+    rolls: {
+      type: "object",
+      properties: { left: count, right: count, toward: count, away: count },
+      required: ["left", "right", "toward", "away"],
+      additionalProperties: false,
+    },
+    rollsDodged: count,
+    hitsTaken: {
+      type: "object",
+      properties: Object.fromEntries(HAZARD_SOURCES.map((source) => [source, count])),
+      additionalProperties: false,
+    },
+    lightAttacks: count,
+    heavyAttacks: count,
+    attacksDuringTelegraph: count,
+    attacksDuringRecover: count,
+    weaknessHits: count,
+    killedBy: { type: ["string", "null"], enum: [...HAZARD_SOURCES, null] },
+    phaseReached: { type: "integer", minimum: 0, maximum: 10 },
+    bossHpFractionAtDeath: { type: "number", minimum: 0, maximum: 1 },
+  },
+  required: [
+    "durationMs", "rolls", "rollsDodged", "hitsTaken", "lightAttacks", "heavyAttacks", "attacksDuringTelegraph",
+    "attacksDuringRecover", "weaknessHits", "killedBy", "phaseReached", "bossHpFractionAtDeath",
+  ],
+  additionalProperties: false,
+} satisfies Schema;
+
+const validateDeathLog = ajv.compile<DeathLog>(deathLogSchema);
+
+export type DeathLogValidation = { ok: true; log: DeathLog } | { ok: false; errors: string[] };
+
+export function parseDeathLog(input: unknown): DeathLogValidation {
+  if (validateDeathLog(input)) return { ok: true, log: input };
+  const errors = (validateDeathLog.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? ""}`.trim());
   return { ok: false, errors };
 }

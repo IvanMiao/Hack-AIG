@@ -2,11 +2,10 @@ import type { Env } from "./env";
 
 export function corsHeaders(request: Request, env: Env): HeadersInit {
   const origin = request.headers.get("origin") ?? "";
-  const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
-  // itch.io serves games from per-project subdomains of itch.zone, so allow that whole zone.
-  const ok = allowed.includes(origin) || /^https:\/\/[a-z0-9-]+\.itch\.zone$/.test(origin) || origin.endsWith(".pages.dev");
+  const allowed = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean);
+  const ok = origin !== "" && allowed.includes(origin);
   return {
-    "access-control-allow-origin": ok ? origin : allowed[0] ?? "*",
+    "access-control-allow-origin": ok ? origin : allowed[0] ?? "null",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type",
     "access-control-max-age": "86400",

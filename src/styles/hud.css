@@ -130,13 +130,13 @@ button.bound-card span { color: var(--bound-accent); font-size: 9px; letter-spac
 .card.revealed { opacity: 1; transform: rotateY(0); }
 .card.ready { border-color: var(--accent); box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 36%, transparent); }
 .card.ready::before { opacity: 0.5; }
-.card.failed { border-color: rgba(255, 130, 148, 0.55); }
+.card.skipped { border-color: rgba(233, 228, 216, 0.28); }
 .card header { position: relative; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .card h3 { margin: 0; color: var(--accent); font-family: var(--font-display); font-size: 13px; letter-spacing: 0.24em; }
 .card-badge { color: var(--muted); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; }
 .card.ready .card-badge { color: var(--accent); }
-.card.failed .card-badge { color: #ffb0ba; }
-.card:not(.ready) .card-badge { animation: pulse 1.6s ease-in-out infinite; }
+.card.skipped .card-badge { color: var(--muted); }
+.card:not(.ready):not(.skipped) .card-badge { animation: pulse 1.6s ease-in-out infinite; }
 .card-body { position: relative; display: flex; flex-direction: column; gap: 8px; margin-top: 15px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .card-body strong { color: var(--bone); font-family: var(--font-display); font-size: 17px; letter-spacing: 0.06em; text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent); }
 .card-body em, .card-body .whisper { color: var(--muted); }

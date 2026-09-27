@@ -5,8 +5,8 @@ export default defineConfig({
   base: "./",
   build: {
     target: "es2022",
-    // dev.html (the lab) ships alongside index.html so it is reachable on itch.io too.
-    rollupOptions: { input: { index: "index.html", dev: "dev.html" } },
+    // Keep the tuning lab on the dev server; publish only the playable game.
+    rollupOptions: { input: "index.html" },
     sourcemap: false,
     assetsInlineLimit: 0,
     chunkSizeWarningLimit: 900,

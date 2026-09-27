@@ -1,5 +1,7 @@
 import manifest from "./fallbackAssets.json";
-import { ASSET_KINDS, type AssetBundle, type AssetKind } from "./assetsClient";
+export const ASSET_KINDS = ["sky", "portrait", "music", "voice"] as const;
+export type AssetKind = (typeof ASSET_KINDS)[number];
+export interface AssetBundle { kind: AssetKind; files: Record<string, string> }
 
 /** Written by `scripts/bake-fallback.ts`: per bound-nightmare code, the files under public/fallback/<code>/ keyed like a Worker manifest. */
 export type BakedManifest = Record<string, Partial<Record<AssetKind, Record<string, string>>>>;

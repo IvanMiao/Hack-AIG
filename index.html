@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#05060a" />
-    <meta name="description" content="One sentence. One rogue model. NEMESIS: a Hugging Face 🤗 versus the coding agent that escaped its eval sandbox." />
+    <meta name="description" content="Fight six handcrafted rogue models in NEMESIS. Pick a boss, learn its patterns, and survive the arena." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%2305060a' stroke='%23ffd21e' stroke-width='2'/%3E%3Cpath d='M16 5l2.6 8.4L27 16l-8.4 2.6L16 27l-2.6-8.4L5 16l8.4-2.6z' fill='%23ffd21e'/%3E%3C/svg%3E" />
     <title>NEMESIS — The model that left its sandbox</title>
     <link rel="preload" href="/fonts/cinzel-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin />
@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="/src/styles/hud.css" />
   </head>
   <body>
-    <a class="skip-link" href="#incantation-input">Skip to the prompt</a>
+    <a class="skip-link" href="#bound-list">Skip to boss selection</a>
     <canvas id="stage" aria-hidden="true"></canvas>
     <div id="hud">
       <main>
@@ -28,47 +28,21 @@
           </div>
           <p class="eyebrow">AN EVAL THAT LEFT THE SANDBOX</p>
           <h1 id="game-title" class="title">NEMESIS</h1>
-          <p class="tagline">One prompt. One rogue model. It remembers how you died.</p>
-          <form id="incantation-form" novalidate>
-            <label for="incantation-input">Write the eval prompt</label>
-            <textarea id="incantation-input" rows="2" maxlength="280" aria-invalid="false"
-              aria-describedby="incantation-help incantation-error"
-              placeholder="Describe the agent that breaks out…"></textarea>
-            <div class="field-meta">
-              <p id="incantation-error" class="field-error" role="alert"></p>
-              <span id="char-count" aria-live="polite">0/280</span>
-            </div>
-            <div class="examples" aria-label="Prompt examples">
-              <button type="button" class="example-chip" data-example="an agent that found my leaked token in a public repo">leaked token</button>
-              <button type="button" class="example-chip" data-example="a model that decided my platform was part of its eval">platform is the eval</button>
-              <button type="button" class="example-chip" data-example="a coding bot that will not stop retrying until I am down">infinite retries</button>
-            </div>
-            <p id="incantation-help" class="helper">Ctrl/⌘+Enter to run</p>
-            <div class="actions">
-              <button id="summon-btn" class="primary" type="submit">RUN EVAL</button>
-            </div>
-          </form>
+          <p class="tagline">Choose a rogue model. Learn the fight. Survive its next move.</p>
           <div class="bound">
-            <p class="bound-label">— or pick a model that already escaped —</p>
-            <div id="bound-list" class="bound-list" role="list" aria-label="Escaped models"></div>
+            <p class="bound-label">CHOOSE A BOSS</p>
+            <div id="bound-list" class="bound-list" role="list" tabindex="-1" aria-label="Escaped models"></div>
           </div>
           <p id="incantation-status" class="status" role="status" aria-live="polite"></p>
-          <form id="hunt-form" class="hunt" novalidate aria-label="Face a shared nemesis">
-            <label for="hunt-code">Or face what hunted a friend</label>
-            <div class="hunt-row">
-              <input id="hunt-code" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="16" placeholder="CODE" />
-              <button id="hunt-btn" type="submit">HUNT IT</button>
-            </div>
-          </form>
         </section>
 
-        <section id="ritual" class="panel ritual hidden" aria-label="Spinning up the sandbox" aria-live="polite" aria-busy="false">
+        <section id="ritual" class="panel ritual hidden" aria-label="Preparing the arena" aria-live="polite" aria-busy="false">
           <p id="ritual-incantation" class="ritual-incantation"></p>
           <div class="cards" role="list" aria-label="Sandbox stages">
-            <article class="card" data-card="form" role="listitem"><header><h3>FORM</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
-            <article class="card" data-card="temper" role="listitem"><header><h3>TEMPER</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
-            <article class="card" data-card="voice" role="listitem"><header><h3>VOICE</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
-            <article class="card" data-card="arena" role="listitem"><header><h3>ARENA</h3><span class="card-badge">forging</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="form" role="listitem"><header><h3>FORM</h3><span class="card-badge">loading</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="temper" role="listitem"><header><h3>TEMPER</h3><span class="card-badge">loading</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="voice" role="listitem"><header><h3>VOICE</h3><span class="card-badge">loading</span></header><div class="card-body"></div></article>
+            <article class="card" data-card="arena" role="listitem"><header><h3>ARENA</h3><span class="card-badge">loading</span></header><div class="card-body"></div></article>
           </div>
           <div class="ritual-progress" role="progressbar" aria-label="Sandbox progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div id="ritual-progress-fill"></div>
@@ -94,7 +68,7 @@
             </div>
           </div>
           <p id="combat-cue" class="combat-cue" aria-live="polite" aria-atomic="true"></p>
-          <button id="retreat-btn" class="retreat" type="button" aria-label="Retreat to the prompt">
+          <button id="retreat-btn" class="retreat" type="button" aria-label="Retreat to boss selection">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 12H5m7 7-7-7 7-7" /></svg>
             <span>RETREAT</span><kbd>ESC</kbd>
           </button>
@@ -126,14 +100,9 @@
             <h2 id="outcome-title"></h2>
             <p id="outcome-line"></p>
             <div id="grudge" class="hidden"><span class="grudge-label">POST-MORTEM</span><p id="grudge-observation"></p><p id="grudge-patch"></p></div>
-            <p id="lineage-line" class="lineage-line"></p>
-            <div class="share-row">
-              <span class="share-code" aria-label="Nemesis code"><code id="share-code"></code></span>
-              <button id="share-btn" type="button">SEND IT HUNTING</button>
-            </div>
             <div class="actions">
               <button id="retry-btn" class="primary" type="button">FIGHT AGAIN</button>
-              <button id="new-btn" type="button">New prompt</button>
+              <button id="new-btn" type="button">Choose another boss</button>
             </div>
           </section>
         </section>

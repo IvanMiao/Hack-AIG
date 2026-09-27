@@ -1,4 +1,4 @@
-import type { AssetBundle, AssetKind } from "../assetsClient";
+import type { AssetBundle, AssetKind } from "../bakedAssets";
 import { ELEMENTS, SILHOUETTES, TEMPERS, WEAKNESS_TRIGGERS, type NemesisSpec } from "../spec";
 
 export type CardName = "form" | "temper" | "voice" | "arena";
@@ -10,10 +10,10 @@ const AUTO_ENTER_DELAY_MS = 1400;
 
 export interface Ritual {
   begin(incantation: string): void;
-  /** Flip the four Forge cards with the spec's fields as soon as Gemini answers. */
+  /** Show the selected offline boss and its bundled assets. */
   revealSpec(spec: NemesisSpec): void;
   markAsset(bundle: AssetBundle): void;
-  failAsset(kind: AssetKind): void;
+  skipAsset(kind: AssetKind): void;
   /** Boss model download progress in [0, 1]; reaching 1 settles the model task. */
   markModel(fraction: number): void;
   setStatus(text: string): void;
@@ -90,14 +90,14 @@ export function createRitual(): Ritual {
       fill.style.width = "0%";
       progress.setAttribute("aria-valuenow", "0");
       echo.textContent = `“${incantation}”`;
-      status.textContent = "Spinning up the sandbox…";
+      status.textContent = "Loading the arena…";
       enter.disabled = true;
       for (const name of CARD_NAMES) {
         const el = card(name);
-        el.classList.remove("revealed", "ready", "failed");
+        el.classList.remove("revealed", "ready", "skipped");
         el.style.removeProperty("--card-art");
         childOf(el, ".card-body").textContent = "";
-        childOf(el, ".card-badge").textContent = "compiling";
+        childOf(el, ".card-badge").textContent = "loading";
       }
       panel.classList.remove("hidden");
     },
@@ -117,7 +117,7 @@ export function createRitual(): Ritual {
       childOf(card("arena"), ".card-body").innerHTML =
         `<span>${text(arenaTheme)}</span><span class="whisper">opening: ${text(trigger)} ×${num(weakness.multiplier)}</span>`;
       CARD_NAMES.forEach((name, i) => window.setTimeout(() => card(name).classList.add("revealed"), 120 + i * 260));
-      status.textContent = `${identity.name} takes shape. Its voice, sky and music are still compiling…`;
+      status.textContent = `${identity.name} takes shape. Loading local assets…`;
       enter.disabled = false;
     },
     markAsset(bundle) {
@@ -128,10 +128,10 @@ export function createRitual(): Ritual {
       if (art) el.style.setProperty("--card-art", `url("${art}")`);
       settle();
     },
-    failAsset(kind) {
+    skipAsset(kind) {
       const el = card(CARD_FOR_ASSET[kind]);
-      el.classList.add("failed");
-      childOf(el, ".card-badge").textContent = "timed out";
+      el.classList.add("skipped");
+      childOf(el, ".card-badge").textContent = kind === "voice" ? "subtitles" : kind === "music" ? "silent" : "built in";
       settle();
     },
     markModel(fraction) {

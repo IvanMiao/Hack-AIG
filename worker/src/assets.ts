@@ -1,7 +1,7 @@
 import { FALLBACK_SPECS, LIMITS, type NemesisSpec, type Voice, type VoiceLines } from "../../src/spec";
 import type { Env } from "./env";
 import { generateImage, generateMusicClip, type MediaBlob } from "./gemini";
-import { designVoice, discardVoice, synthesize } from "./gradium";
+import { designVoice, discardVoice, synthesize, VOICE_RENDER_VERSION } from "./gradium";
 
 export const ASSET_KINDS = ["sky", "portrait", "music", "voice"] as const;
 export type AssetKind = (typeof ASSET_KINDS)[number];
@@ -110,7 +110,7 @@ export function parseVoiceScript(input: unknown): VoiceScript | null {
 }
 
 async function scriptHash(voice: VoiceScript): Promise<string> {
-  const text = JSON.stringify([voice.designPrompt, ...voiceLineEntries({ voice })]);
+  const text = JSON.stringify([VOICE_RENDER_VERSION, voice.designPrompt, ...voiceLineEntries({ voice })]);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].slice(0, 6).map((b) => b.toString(16).padStart(2, "0")).join("");
 }

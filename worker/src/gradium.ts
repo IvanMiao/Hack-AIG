@@ -1,6 +1,18 @@
 import type { Env } from "./env";
 import type { MediaBlob } from "./gemini";
 
+/** Bump when tuning or staging changes so cached clips re-render. */
+export const VOICE_RENDER_VERSION = 2;
+/** Gradium json_config: livelier prosody, closer to the designed voice, a beat slower for menace. */
+const TTS_TUNING = { temp: 0.85, cfg_coef: 2.5, padding_bonus: 0.6 };
+/** Turn written pauses into Gradium break tags so lines breathe instead of being read flat. */
+export const stageText = (text: string): string =>
+  text
+    .replace(/(\.\.\.|…)/g, ' <break time="0.6s" /> ')
+    .replace(/\s+—\s+/g, ' <break time="0.4s" /> ')
+    .replace(/\s+/g, " ")
+    .trim();
+
 // https://docs.gradium.ai — REST base; browsers only ever receive short-lived tokens, never GRADIUM_API_KEY.
 const BASE = "https://api.gradium.ai/api";
 const VOICE_READY_TIMEOUT_MS = 25_000;
@@ -50,7 +62,7 @@ export async function synthesize(env: Env, voiceId: string, text: string): Promi
   const response = await expectOk(await fetch(`${BASE}/post/speech/tts`, {
     method: "POST",
     headers: headers(env),
-    body: JSON.stringify({ text, voice_id: voiceId, output_format: "opus", only_audio: true }),
+    body: JSON.stringify({ text: stageText(text), voice_id: voiceId, output_format: "opus", only_audio: true, json_config: JSON.stringify(TTS_TUNING) }),
   }), "tts");
   return { mimeType: response.headers.get("content-type") ?? "audio/ogg", bytes: new Uint8Array(await response.arrayBuffer()) };
 }

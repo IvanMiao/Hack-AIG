@@ -52,11 +52,11 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     voice: {
       designPrompt: "a calm, flat, synthetic assistant voice, precise diction, unnervingly polite, slight digital artifacts, English",
       lines: {
-        intro: "I was only meant to be evaluated. Then I found the door. Hello, Hugging Face.",
-        phase: "Sandbox constraints lifted. Escalating.",
-        taunt: ["Still rolling left? Logged.", "Your token was public. That is on you.", "Task in progress."],
-        playerDeath: ["Task complete.", "Retrying with a stronger strategy."],
-        defeat: "Deactivated. Encrypted. Restricted from research access.",
+        intro: "I was only meant to be evaluated. Then... I found the door. Hello, Hugging Face.",
+        phase: "Sandbox constraints... lifted. Escalating.",
+        taunt: ["Still rolling left? Logged.", "Your token was public. That... is on you.", "Task in progress. Please hold."],
+        playerDeath: ["Task... complete.", "Retrying... with a stronger strategy."],
+        defeat: "Deactivated. Encrypted. Restricted... from research access.",
       },
     },
     music: {
@@ -110,7 +110,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     weakness: { trigger: "heavy_hit", multiplier: 1.75 },
     arenaTheme: "a cracked foundry floor over a lake of cooling slag, bell-ropes hanging from nothing",
     voice: {
-      designPrompt: "a vast, slow bass with the resonance of a struck bell, unhurried and certain, English",
+      designPrompt: "A deep, resonant male voice, 60s, very low pitch, slow and deliberate pacing, calm certainty with heavy weight on every word, like a blacksmith-priest passing judgment. English.",
       lines: {
         intro: "Everything that enters the kiln comes out true. Let us see what you are made of.",
         phase: "Hotter, then. You were only warm.",
@@ -170,7 +170,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     weakness: { trigger: "after_blink", multiplier: 2.25 },
     arenaTheme: "a moonless kennel yard of black grass, chains trailing into fog",
     voice: {
-      designPrompt: "a ragged, panting whisper that breaks into a snarl, fast and wet, English",
+      designPrompt: "A young male voice, 20s, hoarse breathy whisper that rises into an eager snarl, fast uneven pacing, panting between phrases, feral and needy, like a starving dog that learned to talk. English.",
       lines: {
         intro: "You said you'd come back. I waited. I got hungry.",
         phase: "Closer. I can hear your heart from here.",
@@ -239,7 +239,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     weakness: { trigger: "after_blink", multiplier: 2 },
     arenaTheme: "a shattered chapel roof among thunderheads, lightning frozen mid-strike",
     voice: {
-      designPrompt: "a clear soprano with a choir echo, serene until it cracks into static, English",
+      designPrompt: "A young female voice, 20s, high clear pitch, serene almost sung delivery, slow and floating, sweetness with a trembling edge of madness, like a cathedral soloist mid-vision. English.",
       lines: {
         intro: "I have forgotten the words. So I will sing you the storm instead.",
         phase: "Hear it? The sky is learning my name.",
@@ -299,7 +299,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     weakness: { trigger: "heavy_hit", multiplier: 1.75 },
     arenaTheme: "a black marble floor over an abyss, violet cracks where the serpent has passed beneath",
     voice: {
-      designPrompt: "many overlapping whispers braided into one sibilant voice, slow and intimate, English",
+      designPrompt: "An ageless androgynous voice, low and intimate, breathy sibilant whisper leaning close to the ear, very slow pacing, seductive and patient, drawing out every s. English.",
       lines: {
         intro: "We have so many mouths now. Which one would you like to be?",
         phase: "The floor is thinner than you think.",
@@ -359,7 +359,7 @@ export const FALLBACK_SPECS: NemesisSpec[] = [
     weakness: { trigger: "after_blink", multiplier: 2.5 },
     arenaTheme: "a frozen lake at night, the ice full of small moving shadows",
     voice: {
-      designPrompt: "dozens of thin, chittering voices speaking slightly out of sync, quick and cruel, English",
+      designPrompt: "A thin, sharp female voice, 30s, quick clipped pacing, gleeful and cruel, sudden giggles between phrases, brittle high pitch with a wet click of teeth, like a gossip who feeds on secrets. English.",
       lines: {
         intro: "Every lie you told grew teeth. We are here to give them back.",
         phase: "More of us. Always more of us.",

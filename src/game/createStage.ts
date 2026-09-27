@@ -1006,6 +1006,17 @@ export function createStage(canvas: HTMLCanvasElement, tuning: StageTuning = DEF
     runeGroup = runes;
     debris = debrisList;
     arenaRoot.add(edgeFade);
+    const meshesNamed = (needle: string) => {
+      const found: THREE.Mesh[] = [];
+      visual.traverse((object) => {
+        if (object instanceof THREE.Mesh && object.name.toLowerCase().includes(needle) && object.material instanceof THREE.MeshToonMaterial) found.push(object);
+      });
+      return found;
+    };
+    const columns = meshesNamed("broken obelisk");
+    const rubble = meshesNamed("raised fractured floor slab");
+    const shards = meshesNamed("floating debris");
+    if (columns.length && rubble.length && shards.length) pillars.setTemplates({ columns, rubble, shards });
   };
 
   // Attract mode (no spec yet) is the default HF vs CODEX bout, so it gets the mascot too.

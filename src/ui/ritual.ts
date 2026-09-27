@@ -1,5 +1,5 @@
 import type { AssetBundle, AssetKind } from "../assetsClient";
-import type { NemesisSpec } from "../spec";
+import { ELEMENTS, SILHOUETTES, TEMPERS, WEAKNESS_TRIGGERS, type NemesisSpec } from "../spec";
 
 export type CardName = "form" | "temper" | "voice" | "arena";
 const CARD_NAMES: CardName[] = ["form", "temper", "voice", "arena"];
@@ -33,7 +33,13 @@ const childOf = (card: HTMLElement, selector: string): HTMLElement => {
   return element;
 };
 
-const text = (value: string) => value.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c);
+const text = (value: string) =>
+  value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+
+/** Enum-ish spec fields are rendered only when they are one of the known values; anything else shows as `?`. */
+const oneOf = <T extends string>(allowed: readonly T[], value: string): string => (allowed.includes(value as T) ? value : "?");
+
+const num = (value: number): string => (typeof value === "number" && Number.isFinite(value) ? String(value) : "?");
 
 export function createRitual(): Ritual {
   const panel = byId("ritual");
@@ -98,14 +104,18 @@ export function createRitual(): Ritual {
     revealSpec(spec) {
       const { identity, voice, arenaTheme, music, weakness, phases } = spec;
       const secondWind = Math.round((phases[1]?.hpThreshold ?? 0.5) * 100);
+      const silhouette = oneOf(SILHOUETTES, identity.silhouette);
+      const element = oneOf(ELEMENTS, identity.element);
+      const temper = oneOf(TEMPERS, identity.temper);
+      const trigger = oneOf(WEAKNESS_TRIGGERS, weakness.trigger).replace("_", " ");
       childOf(card("form"), ".card-body").innerHTML =
-        `<strong>${text(identity.name)}</strong><em>${text(identity.title)}</em><span>${identity.silhouette} · ${identity.element}</span>`;
+        `<strong>${text(identity.name)}</strong><em>${text(identity.title)}</em><span>${text(silhouette)} · ${text(element)}</span>`;
       childOf(card("temper"), ".card-body").innerHTML =
-        `<strong>${identity.temper}</strong><span>${music.bpm} bpm · second wind at ${secondWind}% hp</span>`;
+        `<strong>${text(temper)}</strong><span>${num(music.bpm)} bpm · second wind at ${num(secondWind)}% hp</span>`;
       childOf(card("voice"), ".card-body").innerHTML =
         `<span class="whisper">${text(voice.designPrompt)}</span><q>${text(voice.lines.intro)}</q>`;
       childOf(card("arena"), ".card-body").innerHTML =
-        `<span>${text(arenaTheme)}</span><span class="whisper">opening: ${weakness.trigger.replace("_", " ")} ×${weakness.multiplier}</span>`;
+        `<span>${text(arenaTheme)}</span><span class="whisper">opening: ${text(trigger)} ×${num(weakness.multiplier)}</span>`;
       CARD_NAMES.forEach((name, i) => window.setTimeout(() => card(name).classList.add("revealed"), 120 + i * 260));
       status.textContent = `${identity.name} takes shape. Its voice, sky and music are still compiling…`;
       enter.disabled = false;

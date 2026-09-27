@@ -1,5 +1,5 @@
 import { LIMITS } from "./limits";
-import { PHASE_RULES, type NemesisSpec } from "./types";
+import { ELEMENTS, PHASE_RULES, SILHOUETTES, TEMPERS, WEAKNESS_TRIGGERS, type NemesisSpec } from "./types";
 
 /**
  * Fairness rules a spec must satisfy before it is allowed into the arena.
@@ -7,6 +7,10 @@ import { PHASE_RULES, type NemesisSpec } from "./types";
  */
 export function checkInvariants(spec: NemesisSpec): string[] {
   const problems: string[] = [];
+  if (!SILHOUETTES.includes(spec.identity.silhouette)) problems.push(`unknown silhouette ${String(spec.identity.silhouette)}`);
+  if (!ELEMENTS.includes(spec.identity.element)) problems.push(`unknown element ${String(spec.identity.element)}`);
+  if (!TEMPERS.includes(spec.identity.temper)) problems.push(`unknown temper ${String(spec.identity.temper)}`);
+  if (!WEAKNESS_TRIGGERS.includes(spec.weakness.trigger)) problems.push(`unknown weakness trigger ${String(spec.weakness.trigger)}`);
   const { maxHp } = spec.stats;
   if (maxHp < LIMITS.maxHp.min || maxHp > LIMITS.maxHp.max) problems.push(`maxHp out of range: ${maxHp}`);
   const { playerDamage } = spec.stats;

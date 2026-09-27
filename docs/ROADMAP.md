@@ -43,7 +43,7 @@
 
 ### H3 · 3:15–4:30 — GRUDGE 学习 + 二阶段 + 分享
 - A：死亡日志采集（翻滚方向分布、被哪招打中、攻击时机）；死亡画面出 **GRUDGE 卡**（"You rolled left 78% of the time"）→ 新招/参数刻进法阵 → 再战。二阶段 **"空间破碎"过场**：时间膨胀 0.3s、天空盒切换/反色、音乐切 P2、Boss 剪影变形；Boss 台词按事件播放。
-- B：`POST /learn {spec, deathLog}` → Gemini 输出**白名单字段补丁**（加 1 招 / 调 1–2 个参数），服务端 clamp + 重跑不变量。`GET/POST /lineage/:code`：KV 计数 `gen`、`kills`，每日进化上限 3。
+- B：`POST /learn {code, deathLog}` → Gemini 输出**白名单字段补丁**（加 1 招 / 调 1–2 个参数），服务端 clamp + 重跑不变量。`GET/POST /lineage/:code`：KV 计数 `gen`、`kills`，每日进化上限 3。
 - C：分享 URL 编码（`?b=base64(deflate(spec))`）+ 短码 KV；结算卡 DOM→canvas 截图。
 - **里程碑 3（4:30）**：完整循环：召唤 → 死 → 它学了 → 赢 → 分享链接在手机上能开。
 

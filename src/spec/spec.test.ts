@@ -3,7 +3,7 @@ import { FALLBACK_SPECS } from "./fallback";
 import { checkInvariants } from "./invariants";
 import { LIMITS } from "./limits";
 import { normalizeDraft } from "./normalize";
-import { parseForgeDraft } from "./schema";
+import { parseDeathLog, parseForgeDraft } from "./schema";
 import type { ForgeDraft, NemesisSpec } from "./types";
 
 const draftFromSpec = (spec: NemesisSpec): ForgeDraft => ({
@@ -25,6 +25,53 @@ describe("fallback specs", () => {
     const greedy = structuredClone(FALLBACK_SPECS[0]!);
     greedy.stats.playerDamage = 4;
     expect(checkInvariants(greedy)).toContainEqual(expect.stringContaining("playerDamage"));
+  });
+
+  it("rejects identity and weakness values outside the enums", () => {
+    const hostile = structuredClone(FALLBACK_SPECS[0]!);
+    (hostile.identity as { silhouette: string }).silhouette = "<img src=x onerror=alert(1)>";
+    (hostile.weakness as { trigger: string }).trigger = "<svg onload=alert(1)>";
+    const problems = checkInvariants(hostile);
+    expect(problems).toContainEqual(expect.stringContaining("silhouette"));
+    expect(problems).toContainEqual(expect.stringContaining("weakness trigger"));
+  });
+});
+
+describe("parseDeathLog", () => {
+  const log = () => ({
+    durationMs: 42_000,
+    rolls: { left: 3, right: 1, toward: 0, away: 2 },
+    rollsDodged: 2,
+    hitsTaken: { sweep: 2, arena: 1 },
+    lightAttacks: 5,
+    heavyAttacks: 1,
+    attacksDuringTelegraph: 2,
+    attacksDuringRecover: 1,
+    weaknessHits: 0,
+    killedBy: "sweep",
+    phaseReached: 1,
+    bossHpFractionAtDeath: 0.4,
+  });
+
+  it("accepts a real death log, including an arena kill", () => {
+    expect(parseDeathLog(log()).ok).toBe(true);
+    expect(parseDeathLog({ ...log(), killedBy: "arena" }).ok).toBe(true);
+    expect(parseDeathLog({ ...log(), killedBy: null }).ok).toBe(true);
+  });
+
+  it("rejects unknown hazards and out-of-range counters", () => {
+    expect(parseDeathLog({ ...log(), killedBy: "laser" }).ok).toBe(false);
+    expect(parseDeathLog({ ...log(), phaseReached: -1 }).ok).toBe(false);
+    expect(parseDeathLog({ ...log(), lightAttacks: "5" }).ok).toBe(false);
+    expect(parseDeathLog(null).ok).toBe(false);
+  });
+
+  it("strips fields the log does not declare", () => {
+    const input = { ...log(), hitsTaken: { sweep: 2, "<b>": 1 }, spec: {} };
+    const result = parseDeathLog(input);
+    expect(result.ok).toBe(true);
+    expect(input.hitsTaken).toEqual({ sweep: 2 });
+    expect("spec" in input).toBe(false);
   });
 });
 

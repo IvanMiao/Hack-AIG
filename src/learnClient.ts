@@ -14,7 +14,7 @@ export async function learn(spec: NemesisSpec, log: DeathLog): Promise<LearnResp
     const response = await fetch(`${FORGE_URL}/learn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ spec, deathLog: log }),
+      body: JSON.stringify({ code: spec.code, deathLog: log }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`learn ${response.status}`);

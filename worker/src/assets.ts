@@ -135,20 +135,22 @@ const builders: Record<Exclude<AssetKind, "voice">, (env: Env, spec: NemesisSpec
 /**
  * Voice is keyed by the script it speaks, not just the code: a boss whose lines changed (grudge, re-authored fallback,
  * client/worker skew) gets fresh audio instead of the words of an older self. Needs no stored spec, only the code.
+ * `allowRender` gates uncached renders (e.g. a per-code throttle); when it declines, the result is null.
  */
-export async function buildVoiceAsset(env: Env, code: string, voice: VoiceScript): Promise<AssetManifest> {
+export async function buildVoiceAsset(env: Env, code: string, voice: VoiceScript, allowRender: () => Promise<boolean> = async () => true): Promise<AssetManifest | null> {
   const hash = await scriptHash(voice);
   const key = `${manifestKey(code, "voice")}:${hash}`;
   const cached = await env.NEMESIS_KV.get<Record<string, string>>(key, "json");
   if (cached) return { kind: "voice", files: cached, cached: true };
+  if (!(await allowRender())) return null;
   const files = await buildVoice(env, code, voice, hash);
   await env.NEMESIS_KV.put(key, JSON.stringify(files), { expirationTtl: BLOB_TTL_SECONDS });
   return { kind: "voice", files, cached: false };
 }
 
 /** Generate (or reuse) one asset bundle for a forged boss. Kinds are independent so the client can fetch all four in parallel. */
-export async function buildAsset(env: Env, spec: NemesisSpec, kind: AssetKind): Promise<AssetManifest> {
-  if (kind === "voice") return buildVoiceAsset(env, spec.code, spec.voice);
+export async function buildAsset(env: Env, spec: NemesisSpec, kind: AssetKind, allowVoiceRender?: () => Promise<boolean>): Promise<AssetManifest | null> {
+  if (kind === "voice") return buildVoiceAsset(env, spec.code, spec.voice, allowVoiceRender);
   const key = manifestKey(spec.code, kind);
   const cached = await env.NEMESIS_KV.get<Record<string, string>>(key, "json");
   if (cached) return { kind, files: cached, cached: true };

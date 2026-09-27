@@ -1,4 +1,4 @@
-import { ASSET_KINDS, requestAllAssets, type AssetBundle } from "./assetsClient";
+import { ASSET_KINDS, fetchForgeToken, requestAllAssets, type AssetBundle } from "./assetsClient";
 import { bakedBundles } from "./bakedAssets";
 import { forge } from "./forgeClient";
 import { learn } from "./learnClient";
@@ -206,7 +206,7 @@ function applyAsset(bundle: AssetBundle) {
   }
 }
 
-type SummonResult = { spec: NemesisSpec; source: "gemini" | "fallback"; lineage?: Partial<Lineage> | null };
+type SummonResult = { spec: NemesisSpec; source: "gemini" | "fallback"; lineage?: Partial<Lineage> | null; token?: string };
 
 async function summon(incantation: string, forgeSpec: () => Promise<SummonResult>, chosen = false) {
   const token = ++summonToken;
@@ -249,18 +249,28 @@ async function summon(incantation: string, forgeSpec: () => Promise<SummonResult
     applyAsset(bundle);
     ritual.markAsset(bundle);
   }
-  await requestAllAssets(result.spec, {
-    onReady: (bundle) => {
-      if (token !== summonToken) return;
-      applyAsset(bundle);
-      ritual.markAsset(bundle);
-    },
-    onFail: (kind, error) => {
-      if (token !== summonToken) return;
-      console.warn(`[asset] ${kind} failed`, error);
-      ritual.failAsset(kind);
-    },
-  }, missingKinds);
+  // A bound nightmare summoned locally has no forge token yet; the Worker hands one out for any code it knows.
+  const forgeToken = missingKinds.length === 0 ? "" : result.token ?? await fetchForgeToken(result.spec.code).catch((error: unknown) => {
+    console.warn("[asset] no forge token", error);
+    return null;
+  });
+  if (token !== summonToken) return;
+  if (forgeToken === null) {
+    for (const kind of missingKinds) ritual.failAsset(kind);
+  } else {
+    await requestAllAssets(result.spec, forgeToken, {
+      onReady: (bundle) => {
+        if (token !== summonToken) return;
+        applyAsset(bundle);
+        ritual.markAsset(bundle);
+      },
+      onFail: (kind, error) => {
+        if (token !== summonToken) return;
+        console.warn(`[asset] ${kind} failed`, error);
+        ritual.failAsset(kind);
+      },
+    }, missingKinds);
+  }
   await modelReady;
   if (token === summonToken) setRitualBusy(false);
 }
@@ -426,7 +436,7 @@ async function hunt(rawCode: string) {
   status.textContent = "";
   const hunted = found;
   huntInput.value = "";
-  void summon(`${hunted.spec.identity.incantation} — hunted by code ${code}`, () => Promise.resolve({ spec: hunted.spec, source: "gemini" as const, lineage: hunted.lineage }));
+  void summon(`${hunted.spec.identity.incantation} — hunted by code ${code}`, () => Promise.resolve({ spec: hunted.spec, source: "gemini" as const, lineage: hunted.lineage, token: hunted.token }));
 }
 
 function handleEvents(events: readonly BattleEvent[]) {

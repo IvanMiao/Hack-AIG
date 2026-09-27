@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { buildAsset, isAssetKind, loadSpecByCode, readBlob } from "./assets";
+import { buildAsset, buildVoiceAsset, isAssetKind, loadSpecByCode, parseVoiceScript, readBlob } from "./assets";
 import { forgeNemesis } from "./forge";
 import { mintGradiumToken } from "./gradium";
 import { corsHeaders, error, json, readJson } from "./http";
@@ -39,16 +39,23 @@ export default {
       }
 
       if (path === "/forge/asset" && request.method === "POST") {
-        const body = await readJson<{ code?: string; kind?: string }>(request);
+        const body = await readJson<{ code?: string; kind?: string; voice?: unknown }>(request);
         const code = body?.code ?? "";
         if (!/^[A-Za-z0-9-]{4,16}$/.test(code)) return error(400, "bad code", cors);
         if (!isAssetKind(body?.kind)) return error(400, "kind must be sky|portrait|music|voice", cors);
+        // The client sends the lines it will subtitle; the voice is synthesized from those exact words, even for a
+        // bound nightmare this Worker build has never heard of.
+        if (body.kind === "voice" && body.voice !== undefined) {
+          const script = parseVoiceScript(body.voice);
+          if (!script) return error(400, "bad voice script", cors);
+          return json(await buildVoiceAsset(env, code, script), {}, cors);
+        }
         const spec = await loadSpecByCode(env, code);
         if (!spec) return error(404, "unknown nemesis", cors);
         return json(await buildAsset(env, spec, body.kind), {}, cors);
       }
 
-      const assetMatch = /^\/asset\/([A-Za-z0-9-]{4,16})\/([a-z0-9-]{1,32})$/.exec(path);
+      const assetMatch = /^\/asset\/([A-Za-z0-9-]{4,16})\/([A-Za-z0-9-]{1,48})$/.exec(path);
       if (assetMatch && request.method === "GET") {
         const blob = await readBlob(env, assetMatch[1] ?? "", assetMatch[2] ?? "");
         if (!blob) return error(404, "no such asset", cors);
